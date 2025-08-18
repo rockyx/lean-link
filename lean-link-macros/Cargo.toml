@@ -1,0 +1,24 @@
+[package]
+name = "lean-link-macros"
+version = "0.1.0"
+edition = "2024"
+description = ""
+license = "MIT OR Apache-2.0"
+categories = []
+keywords = []
+rust-version = "1.89"
+
+[lib]
+name = "lean_link_macros"
+path = "src/lib.rs"
+proc-macro = true
+
+[dependencies]
+heck = "0.5.0"
+proc-macro2 = "1.0.97"
+quote = "1.0.40"
+syn = "2.0.104"
+
+[dev-dependencies]
+
+[features]

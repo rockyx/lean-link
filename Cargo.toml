@@ -1,0 +1,54 @@
+[workspace]
+members = [".", "lean-link-macros"]
+
+[package]
+name = "lean-link"
+version = "0.1.0"
+authors = ["Rocky Tsui <rocky@lsfinfo.com>"]
+edition = "2024"
+description = ""
+license = "MIT OR Apache-2.0"
+categories = []
+keywords = []
+rust-version = "1.89"
+
+[lib]
+name = "lean_link"
+path = "src/lib.rs"
+
+[dependencies]
+actix-web = { version = "4.11.0", optional = true }
+async-trait = "0.1.88"
+bcrypt = "0.17.0"
+bytes = "1.10.1"
+chrono = "0.4.41"
+futures = "0.3.31"
+futures-util = "0.3.31"
+lean-link-macros = { path = "./lean-link-macros" }
+rumqttc = { version = "0.24.0", optional = true }
+sea-orm = { version = "1.1.14", features = ["runtime-tokio", "debug-print"] }
+sea-orm-migration = { version = "1.1.14" }
+serde = { version = "1.0.219", features = ["derive"] }
+serde_json = "1.0.142"
+serialport = { version = "4.7.2", features = ["serde"], optional = true }
+thiserror = "2.0.14"
+tokio = { version = "1.47.1", features = ["full"] }
+tokio-modbus = { version = "0.16.1", optional = true }
+tokio-retry2 = { version = "0.5.7", features = ["jitter", "tracing"] }
+tokio-serial = { version = "5.4.5", optional = true }
+tokio-tungstenite = { version = "0.27.0", optional = true }
+tracing = "0.1.41"
+tracing-subscriber = "0.3.19"
+
+[dev-dependencies]
+
+[features]
+default = ["web", "sqlite"]
+sqlite = ["sea-orm/sqlx-sqlite", "sea-orm-migration/sqlx-sqlite"]
+mysql = ["sea-orm/sqlx-mysql", "sea-orm-migration/sqlx-mysql"]
+postgres = ["sea-orm/sqlx-postgres", "sea-orm-migration/sqlx-postgres"]
+web = ["actix-web"]
+serialport = ["tokio-serial", "dep:serialport"]
+mqtt = ["rumqttc"]
+modbus = ["tokio-modbus", "serialport"]
+socket = ["tokio-tungstenite"]
