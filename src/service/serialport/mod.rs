@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, pin::Pin, sync::Arc};
 use tokio::sync::RwLock;
 use tokio::sync::mpsc::{Receiver, Sender};
 
@@ -42,7 +42,24 @@ pub enum FrameHandlerEvent {
     Close {},
 }
 
-pub type FrameHandler = Box<dyn Fn(Sender<ToPortEvent>, Receiver<FrameHandlerEvent>) + Send + Sync>;
+pub type FrameHandler = Box<
+    dyn Fn(
+            Sender<ToPortEvent>,
+            Receiver<FrameHandlerEvent>,
+            Pin<
+                Box<
+                    dyn Fn(
+                            bytes::Bytes,
+                            bool,
+                        )
+                            -> Pin<Box<dyn Future<Output = std::io::Result<usize>> + Send>>
+                        + Send
+                        + Sync,
+                >,
+            >,
+        ) + Send
+        + Sync,
+>;
 
 #[derive(Clone)]
 pub struct SerialPortService {

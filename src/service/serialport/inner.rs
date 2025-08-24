@@ -5,6 +5,7 @@ use super::{
 };
 use std::{
     collections::HashMap,
+    pin::Pin,
     sync::{
         Arc,
         atomic::{AtomicI16, Ordering},
@@ -172,8 +173,23 @@ impl SerialPortInner {
         let data_parser = self.data_parser.clone();
         let frame_handler = self.frame_handler.clone();
 
+        let self_clone = self.clone();
+
         data_parser(frame_handler_tx, data_parser_rx);
-        frame_handler(to_port_event_tx, frame_handler_rx);
+        frame_handler(
+            to_port_event_tx,
+            frame_handler_rx,
+            Box::pin(move |data, need_ack| {
+                let self_clone = self_clone.clone();
+                Box::pin(async move {
+                    if need_ack {
+                        self_clone.write_need_ack(&data).await
+                    } else {
+                        self_clone.write(&data).await
+                    }
+                })
+            }),
+        );
     }
 
     pub async fn remove_config(&self, config: &SerialPortConfig) {
@@ -305,7 +321,7 @@ async fn test_serial_port_inner() {
                 }
             });
         }),
-        Box::new(move |to_port_sender, mut frame_handler_rx| {
+        Box::new(move |to_port_sender, mut frame_handler_rx, _| {
             tokio::spawn(async move {
                 loop {
                     select! {
