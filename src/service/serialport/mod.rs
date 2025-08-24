@@ -1,67 +1,29 @@
-use serde::{Deserialize, Serialize};
-use std::time::Duration;
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::RwLock;
 use tokio::sync::mpsc::{Receiver, Sender};
-use tokio_serial::{DataBits, FlowControl, Parity, StopBits};
 
-use crate::service::serialport::inner::SerialPortInner;
+pub use crate::service::serialport::holder::SerialPortConfig;
+pub use crate::service::serialport::inner::{
+    HeartbeatCommandBuilder, SerialPortInner, SerialPortInnerBuilder,
+};
 
 mod holder;
 mod inner;
-
-/// 串口配置
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SerialPortConfig {
-    /// 串口路径
-    pub path: String,
-    /// 波特率
-    pub baud_rate: u32,
-    /// 数据位
-    pub data_bits: DataBits,
-    /// 流控制
-    pub flow_control: FlowControl,
-    /// 校验位
-    pub parity: Parity,
-    /// 停止位
-    pub stop_bits: StopBits,
-    /// 超时时间
-    #[serde(with = "duration_millis")]
-    pub timeout: Duration,
-}
-
-mod duration_millis {
-    use serde::{Deserialize, Deserializer, Serializer};
-    use std::time::Duration;
-
-    pub fn serialize<S>(duration: &Duration, serializer: S) -> std::result::Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        serializer.serialize_u64(duration.as_millis() as u64)
-    }
-
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<Duration, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let millis = u64::deserialize(deserializer)?;
-        Ok(Duration::from_millis(millis))
-    }
-}
 
 #[derive(Clone, Debug)]
 pub enum FromPortEvent {
     Ack {},
     Timeout {},
     Close {},
+    HeartbeatAck {},
+    HeartbeatTimeout {},
 }
 
 #[derive(Clone, Debug)]
 pub enum ToPortEvent {
     Write { data: bytes::Bytes, need_ack: bool },
     Ack {},
+    Heartbeat {},
     Stop {},
 }
 
@@ -82,34 +44,26 @@ pub enum FrameHandlerEvent {
 
 pub type FrameHandler = Box<dyn Fn(Sender<ToPortEvent>, Receiver<FrameHandlerEvent>) + Send + Sync>;
 
-pub struct SerialPortOption {
-    pub name: String,
-    pub configs: Vec<SerialPortConfig>,
-    pub data_parser: DataParser,
-    pub frame_handler: FrameHandler,
-}
-
 #[derive(Clone)]
-pub struct SerialPortDevice {
+pub struct SerialPortService {
     inner_map: Arc<RwLock<HashMap<String, SerialPortInner>>>,
 }
 
-impl SerialPortDevice {
+impl SerialPortService {
     pub fn new() -> Self {
         Self {
             inner_map: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
-    pub async fn add_serialport(&self, option: SerialPortOption) {
+    pub async fn add_serialport(&self, name: &str, inner: SerialPortInner) {
         let mut inner_map = self.inner_map.write().await;
 
-        if inner_map.contains_key(&option.name) {
-            inner_map.remove(&option.name);
+        if inner_map.contains_key(name) {
+            inner_map.remove(name);
         }
 
-        let inner = SerialPortInner::new(&option.configs, option.data_parser, option.frame_handler);
-        inner_map.insert(option.name, inner);
+        inner_map.insert(name.to_string(), inner);
     }
 
     pub async fn add_serialport_config(

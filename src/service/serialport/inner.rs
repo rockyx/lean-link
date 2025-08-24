@@ -1,11 +1,16 @@
+use super::{
+    DataParser, DataParserEvent, FrameHandler, FrameHandlerEvent, FromPortEvent, SerialPortConfig,
+    ToPortEvent,
+    holder::{HeartbeatCommand, SerialPortHolder, SerialPortHolderBuilder},
+};
 use std::{
     collections::HashMap,
     sync::{
         Arc,
         atomic::{AtomicI16, Ordering},
     },
+    time::Duration,
 };
-
 use tokio::{
     select,
     sync::{
@@ -14,10 +19,47 @@ use tokio::{
     },
 };
 
-use super::{
-    DataParser, DataParserEvent, FrameHandler, FrameHandlerEvent, FromPortEvent, SerialPortConfig,
-    ToPortEvent, holder::SerialPortHolder,
-};
+pub type HeartbeatCommandBuilder = Box<dyn Fn() -> HeartbeatCommand + Send + Sync>;
+
+pub struct SerialPortInnerBuilder {
+    configs: Vec<SerialPortConfig>,
+    data_parser: DataParser,
+    frame_handler: FrameHandler,
+    heartbeat_command: Option<HeartbeatCommandBuilder>,
+    heartbeat_interval: Duration,
+}
+
+impl SerialPortInnerBuilder {
+    pub fn new(
+        configs: Vec<SerialPortConfig>,
+        data_parser: DataParser,
+        frame_handler: FrameHandler,
+    ) -> Self {
+        Self {
+            configs,
+            data_parser,
+            frame_handler,
+            heartbeat_command: None,
+            heartbeat_interval: Duration::from_secs(30),
+        }
+    }
+
+    pub fn heartbeat(mut self, command: HeartbeatCommandBuilder, interval: Duration) -> Self {
+        self.heartbeat_command = Some(command);
+        self.heartbeat_interval = interval;
+        self
+    }
+
+    pub fn build(self) -> SerialPortInner {
+        SerialPortInner::new(
+            &self.configs,
+            self.data_parser,
+            self.frame_handler,
+            self.heartbeat_command,
+            self.heartbeat_interval,
+        )
+    }
+}
 
 fn _start_holder_event(mut from_port_event_rx: Receiver<FromPortEvent>, inner: &SerialPortInner) {
     let inner = inner.clone();
@@ -41,6 +83,12 @@ fn _start_holder_event(mut from_port_event_rx: Receiver<FromPortEvent>, inner: &
                                 FromPortEvent::Close {} => {
                                     tracing::debug!("close");
                                 },
+                                FromPortEvent::HeartbeatAck {} => {
+                                    tracing::debug!("heartbeat ack");
+                                },
+                                FromPortEvent::HeartbeatTimeout {} => {
+                                    tracing::debug!("heartbeat timeout");
+                                }
                             }
                         }
                         None => {
@@ -60,6 +108,8 @@ pub struct SerialPortInner {
     from_port_event_tx: Sender<FromPortEvent>,
     data_parser: Arc<DataParser>,
     frame_handler: Arc<FrameHandler>,
+    heartbeat_command: Arc<Option<HeartbeatCommandBuilder>>,
+    heartbeat_interval: Duration,
 }
 
 impl SerialPortInner {
@@ -67,33 +117,33 @@ impl SerialPortInner {
         configs: &Vec<SerialPortConfig>,
         data_parser: DataParser,
         frame_handler: FrameHandler,
+        heartbeat_command: Option<HeartbeatCommandBuilder>,
+        heartbeat_interval: Duration,
     ) -> Self {
-        let mut port_holders = HashMap::new();
+        let port_holders = HashMap::new();
         let res_counter = Arc::new(AtomicI16::new(-1));
         let (from_port_event_tx, from_port_event_rx) = mpsc::channel::<FromPortEvent>(32);
 
         let from_port_event_tx = from_port_event_tx.clone();
-        for config in configs {
-            let (data_parser_tx, data_parser_rx) = mpsc::channel::<DataParserEvent>(32);
-            let (frame_handler_tx, frame_handler_rx) = mpsc::channel::<FrameHandlerEvent>(32);
-
-            let holder =
-                SerialPortHolder::new(&config.clone(), &from_port_event_tx, data_parser_tx.clone());
-            let to_port_event_tx = holder.to_port_event_tx().clone();
-
-            data_parser(frame_handler_tx, data_parser_rx);
-            frame_handler(to_port_event_tx, frame_handler_rx);
-
-            port_holders.insert(config.path.clone(), holder);
-        }
-
         let ret = Self {
             port_holders: Arc::new(RwLock::new(port_holders)),
             res_counter,
             from_port_event_tx: from_port_event_tx.clone(),
             data_parser: Arc::new(data_parser),
             frame_handler: Arc::new(frame_handler),
+            heartbeat_command: Arc::new(heartbeat_command),
+            heartbeat_interval,
         };
+        {
+            let configs = configs.clone();
+            let ret = ret.clone();
+            tokio::spawn(async move {
+                for config in configs {
+                    ret.add_config(&config).await;
+                }
+            });
+        }
+
         _start_holder_event(from_port_event_rx, &ret);
         ret
     }
@@ -108,8 +158,14 @@ impl SerialPortInner {
         let (data_parser_tx, data_parser_rx) = mpsc::channel::<DataParserEvent>(32);
         let (frame_handler_tx, frame_handler_rx) = mpsc::channel::<FrameHandlerEvent>(32);
 
-        let holder =
-            SerialPortHolder::new(&config.clone(), &self.from_port_event_tx, data_parser_tx);
+        let mut builder =
+            SerialPortHolderBuilder::new(&config.clone(), &self.from_port_event_tx, data_parser_tx);
+        let heartbeat_command = self.heartbeat_command.as_ref();
+        if heartbeat_command.is_some() {
+            let command = heartbeat_command.as_ref().unwrap();
+            builder = builder.heartbeat(command(), self.heartbeat_interval);
+        }
+        let holder = builder.build();
         let to_port_event_tx = holder.to_port_event_tx().clone();
         port_holders.insert(config.path.clone(), holder);
 
@@ -218,8 +274,8 @@ async fn test_serial_port_inner() {
         flow_control: tokio_serial::FlowControl::None,
     }];
 
-    let inner = SerialPortInner::new(
-        &configs,
+    let inner = SerialPortInnerBuilder::new(
+        configs,
         Box::new(move |frame_handler_tx, mut data_parser_rx| {
             tokio::spawn(async move {
                 loop {
@@ -272,7 +328,7 @@ async fn test_serial_port_inner() {
                 }
             });
         }),
-    );
+    ).heartbeat(Box::new(|| { Box::new(||{bytes::Bytes::from("heartbeat")})}), Duration::from_secs(1)).build();
     let inner1 = inner.clone();
     let task1 = tokio::spawn(async move {
         tokio::time::sleep(std::time::Duration::from_secs(5)).await;

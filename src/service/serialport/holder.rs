@@ -1,14 +1,99 @@
-use super::{DataParserEvent, FromPortEvent, SerialPortConfig, ToPortEvent};
+use super::{DataParserEvent, FromPortEvent, ToPortEvent};
+use serde::{Deserialize, Serialize};
 use serialport::SerialPort;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::select;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::sync::{Mutex, Notify};
 use tokio::time::timeout;
-use tokio_serial::SerialPortBuilderExt;
+use tokio_serial::{DataBits, FlowControl, Parity, SerialPortBuilderExt, StopBits};
+
+/// 串口配置
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SerialPortConfig {
+    /// 串口路径
+    pub path: String,
+    /// 波特率
+    pub baud_rate: u32,
+    /// 数据位
+    pub data_bits: DataBits,
+    /// 流控制
+    pub flow_control: FlowControl,
+    /// 校验位
+    pub parity: Parity,
+    /// 停止位
+    pub stop_bits: StopBits,
+    /// 超时时间
+    #[serde(with = "duration_millis")]
+    pub timeout: Duration,
+}
+
+mod duration_millis {
+    use serde::{Deserialize, Deserializer, Serializer};
+    use std::time::Duration;
+
+    pub fn serialize<S>(duration: &Duration, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_u64(duration.as_millis() as u64)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Duration, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let millis = u64::deserialize(deserializer)?;
+        Ok(Duration::from_millis(millis))
+    }
+}
+
+pub type HeartbeatCommand = Box<dyn Fn() -> bytes::Bytes + Send + Sync>;
+
+pub struct SerialPortHolderBuilder {
+    config: SerialPortConfig,
+    heartbeat_command: Option<HeartbeatCommand>,
+    heartbeat_interval: Duration,
+    from_port_event_tx: Sender<FromPortEvent>,
+    data_parser_sender: Sender<DataParserEvent>,
+}
+
+impl SerialPortHolderBuilder {
+    pub fn new(
+        config: &SerialPortConfig,
+        from_port_event_tx: &Sender<FromPortEvent>,
+        data_parser_sender: Sender<DataParserEvent>,
+    ) -> Self {
+        Self {
+            config: config.clone(),
+            heartbeat_command: None,
+            heartbeat_interval: Duration::from_secs(30),
+            from_port_event_tx: from_port_event_tx.clone(),
+            data_parser_sender,
+        }
+    }
+
+    pub fn heartbeat(mut self, command: HeartbeatCommand, interval: Duration) -> Self {
+        self.heartbeat_command = Some(command);
+        self.heartbeat_interval = interval;
+        self
+    }
+
+    pub fn build(self) -> SerialPortHolder {
+        SerialPortHolder::new(
+            &self.config,
+            &self.from_port_event_tx,
+            self.data_parser_sender,
+            self.heartbeat_command,
+            self.heartbeat_interval,
+        )
+    }
+}
 
 async fn _start_open(
     is_stop: Arc<AtomicBool>,
@@ -73,9 +158,12 @@ async fn _start_read_write(
     mut to_port_event_rx: Receiver<ToPortEvent>,
     notify: Arc<Notify>,
     from_port_event_tx: Sender<FromPortEvent>,
+    heartbeat_command: Arc<Mutex<Option<HeartbeatCommand>>>,
+    heartbeat_interval: Duration,
 ) {
     let mut buf = [0u8; 1024]; // 预分配缓冲区
     let mut is_need_ack = false;
+    let mut is_heartbeat = false;
     loop {
         let notify = notify.clone();
 
@@ -89,6 +177,7 @@ async fn _start_read_write(
             continue;
         }
         let port = port_guard.as_mut().unwrap();
+
         select! {
             read_data = port.read(&mut buf) => {
                 match read_data {
@@ -98,9 +187,9 @@ async fn _start_read_write(
                     Ok(n) => {
                         let data = &buf[..n];
                         let hex_data: Vec<String> = data.iter().map(|b| format!("{:02X}", b)).collect();
-                        tracing::info!("串口读取数据({}): [ {} ]", config.path, hex_data.join(" "));
+                        tracing::info!("SerialPort Read ({}): [ {} ]", config.path, hex_data.join(" "));
                         let result = data_parser_sender.send(DataParserEvent::Data { data: (bytes::Bytes::copy_from_slice(data)) }).await;
-                        tracing::info!("串口读取数据解析({}): {:?}", config.path, result);
+                        tracing::info!("SerialPort Read Parse({}): {:?}", config.path, result);
                     },
                     Err(e) => {
                         port_guard.take();
@@ -115,20 +204,21 @@ async fn _start_read_write(
                     Some(event) => {
                         match event {
                             ToPortEvent::Write { data, need_ack } => {
+                                is_heartbeat = false;
                                 let hex_data: Vec<String> = data.iter().map(|b| format!("{:02X}", b)).collect();
-                                tracing::info!("串口写入数据({}): [ {} ]", config.path, hex_data.join(" "));
+                                tracing::info!("SerialPort Write({}): [ {} ]", config.path, hex_data.join(" "));
                                 match port.write(&data).await {
                                     Ok(_) => {
-                                        tracing::info!("串口写入成功({})", config.path);
+                                        tracing::info!("SerialPort Write Success({})", config.path);
                                         is_need_ack = need_ack;
                                         if need_ack {
-                                            tracing::info!("等待串口应答...");
+                                            tracing::info!("Waiting SerialPort Response...");
                                         }
                                     },
                                     Err(e) => {
                                         tracing::error!("Write error: {}", e);
                                         port_guard.take();
-                                        tracing::error!("Error reading from serial port: {}", e);
+                                        tracing::error!("Error writing to serial port: {}", e);
                                         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
                                         continue;
                                     },
@@ -136,6 +226,10 @@ async fn _start_read_write(
                             },
                             ToPortEvent::Ack {} => {
                                 tracing::debug!("ToPortEvent::Ack");
+                                notify.notify_one();
+                            }
+                            ToPortEvent::Heartbeat {} => {
+                                tracing::debug!("ToPortEvent::Heartbeat");
                                 notify.notify_one();
                             }
                             ToPortEvent::Stop {} => {
@@ -151,15 +245,44 @@ async fn _start_read_write(
                 }
             }
 
+            _ = tokio::time::sleep(heartbeat_interval), if heartbeat_command.lock().await.is_some() & !is_need_ack => {
+                let data = heartbeat_command.lock().await.as_ref().unwrap()();
+                let hex_data: Vec<String> = data.iter().map(|b| format!("{:02X}", b)).collect();
+                tracing::info!("SerialPort Heartbeat({}): [ {} ]", config.path, hex_data.join(" "));
+                match port.write(&data).await {
+                    Ok(_) => {
+                        is_need_ack = true;
+                        is_heartbeat = true;
+                    },
+                    Err(e) => {
+                        tracing::error!("Heartbeat error: {}", e);
+                        port_guard.take();
+                        tracing::error!("Error reading from serial port: {}", e);
+                        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                        continue;
+                    },
+                }
+            }
+
             timeout_result = timeout(config.timeout, notify.clone().notified_owned()), if is_need_ack => {
                 match timeout_result {
                     Ok(_) => {
-                        let _ = from_port_event_tx.send(FromPortEvent::Ack {}).await;
+                        if is_heartbeat {
+                            let _ = from_port_event_tx.send(FromPortEvent::HeartbeatAck {}).await;
+                        } else {
+                            let _ = from_port_event_tx.send(FromPortEvent::Ack {}).await;
+                        }
                         is_need_ack = false;
+                        is_heartbeat = false;
                     },
                     Err(_) => {
-                        let _ = from_port_event_tx.send(FromPortEvent::Timeout {}).await;
+                        if is_heartbeat {
+                            let _ = from_port_event_tx.send(FromPortEvent::HeartbeatTimeout {}).await;
+                        } else {
+                            let _ = from_port_event_tx.send(FromPortEvent::Timeout {}).await;
+                        }
                         is_need_ack = false;
+                        is_heartbeat = false;
                     },
                 }
             }
@@ -180,11 +303,15 @@ impl SerialPortHolder {
         config: &SerialPortConfig,
         from_port_event_tx: &Sender<FromPortEvent>,
         data_parser_sender: Sender<DataParserEvent>,
+        heartbeat_command: Option<HeartbeatCommand>,
+        heartbeat_interval: Duration,
     ) -> Self {
         let port = Arc::new(Mutex::new(None));
         let is_stop = Arc::new(AtomicBool::new(false));
         let (to_port_event_tx, to_port_event_rx) = mpsc::channel::<ToPortEvent>(32);
         let notify = Arc::new(Notify::new());
+        let heartbeat_command = Arc::new(Mutex::new(heartbeat_command));
+        let heartbeat_interval = heartbeat_interval;
 
         {
             let is_stop = is_stop.clone();
@@ -202,6 +329,7 @@ impl SerialPortHolder {
             let data_parser_sender = data_parser_sender.clone();
             let notify = notify.clone();
             let from_port_event_tx = from_port_event_tx.clone();
+            let heartbeat_command = heartbeat_command.clone();
             tokio::spawn(async move {
                 _start_read_write(
                     is_stop,
@@ -211,6 +339,8 @@ impl SerialPortHolder {
                     to_port_event_rx,
                     notify,
                     from_port_event_tx,
+                    heartbeat_command,
+                    heartbeat_interval,
                 )
                 .await;
             });
@@ -258,7 +388,9 @@ async fn test_serial_port_holder() {
 
     let (from_port_event_tx, mut from_port_event_rx) = mpsc::channel::<FromPortEvent>(10);
     let (data_parser_sender, mut data_parser_rx) = mpsc::channel::<DataParserEvent>(10);
-    let holder = SerialPortHolder::new(&config, &from_port_event_tx, data_parser_sender.clone());
+    let holder = SerialPortHolderBuilder::new(&config, &from_port_event_tx, data_parser_sender.clone()).heartbeat(Box::new(|| {
+        bytes::Bytes::from("test")
+    }), Duration::from_secs(1)).build();
     let to_port_event_tx = holder.to_port_event_tx();
 
     let task1_tx = to_port_event_tx.clone();
@@ -333,9 +465,7 @@ async fn test_serial_port_holder() {
                                 FromPortEvent::Close {} => {
                                     break;
                                 }
-                                FromPortEvent::Timeout {} => {
-                                }
-                                _ => {},
+                                _ => {}
                             }
                         }
                         None => {
