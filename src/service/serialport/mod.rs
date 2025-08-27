@@ -1,136 +1,42 @@
-use std::{collections::HashMap, pin::Pin, sync::Arc};
-use tokio::sync::RwLock;
-use tokio::sync::mpsc::{Receiver, Sender};
+mod port;
+mod group;
 
-pub use crate::service::serialport::holder::SerialPortConfig;
-pub use crate::service::serialport::inner::{
-    HeartbeatCommandBuilder, SerialPortInner, SerialPortInnerBuilder,
-};
+use std::time::Duration;
 
-mod holder;
-mod inner;
+pub use port::*;
+pub use group::*;
+use serde::{Deserialize, Serialize};
+use serialport::{DataBits, FlowControl, Parity, StopBits};
 
-#[derive(Clone, Debug)]
-pub enum FromPortEvent {
-    Ack {},
-    Timeout {},
-    Close {},
-    HeartbeatAck {},
-    HeartbeatTimeout {},
+/// 串口配置
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+pub struct SerialPortConfig {
+    pub path: String,
+    pub baud_rate: u32,
+    pub data_bits: DataBits,
+    pub stop_bits: StopBits,
+    pub parity: Parity,
+    pub flow_control: FlowControl,
+    #[serde(with = "duration_millis")]
+    pub timeout: Duration,  
 }
 
-#[derive(Clone, Debug)]
-pub enum ToPortEvent {
-    Write { data: bytes::Bytes, need_ack: bool },
-    Ack {},
-    Heartbeat {},
-    Stop {},
-}
+mod duration_millis {
+    use serde::{Deserialize, Deserializer, Serializer};
+    use std::time::Duration;
 
-#[derive(Clone, Debug)]
-pub enum DataParserEvent {
-    Data { data: bytes::Bytes },
-    Close {},
-}
-
-pub type DataParser =
-    Box<dyn Fn(Sender<FrameHandlerEvent>, Receiver<DataParserEvent>) + Send + Sync>;
-
-#[derive(Clone, Debug)]
-pub enum FrameHandlerEvent {
-    Data { data: bytes::Bytes },
-    Close {},
-}
-
-pub type FrameHandler = Box<dyn Fn(Sender<ToPortEvent>, Receiver<FrameHandlerEvent>) + Send + Sync>;
-
-#[derive(Clone)]
-pub struct SerialPortService {
-    inner_map: Arc<RwLock<HashMap<String, SerialPortInner>>>,
-}
-
-impl SerialPortService {
-    pub fn new() -> Self {
-        Self {
-            inner_map: Arc::new(RwLock::new(HashMap::new())),
-        }
+    pub fn serialize<S>(duration: &Duration, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_u64(duration.as_millis() as u64)
     }
 
-    pub async fn add_serialport(&self, name: &str, inner: SerialPortInner) {
-        let mut inner_map = self.inner_map.write().await;
-
-        if inner_map.contains_key(name) {
-            inner_map.remove(name);
-        }
-
-        inner_map.insert(name.to_string(), inner);
-    }
-
-    pub async fn add_serialport_config(
-        &self,
-        name: &str,
-        config: &SerialPortConfig,
-    ) -> std::io::Result<()> {
-        let inner_map = self.inner_map.read().await;
-
-        if let Some(inner) = inner_map.get(name) {
-            inner.add_config(config).await;
-            Ok(())
-        } else {
-            Err(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                "SerialPort not found",
-            ))
-        }
-    }
-
-    pub async fn remove_serialport_config(
-        &self,
-        name: &str,
-        config: &SerialPortConfig,
-    ) -> std::io::Result<()> {
-        let inner_map = self.inner_map.read().await;
-
-        if let Some(inner) = inner_map.get(name) {
-            inner.remove_config(config).await;
-            Ok(())
-        } else {
-            Err(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                "SerialPort not found",
-            ))
-        }
-    }
-
-    pub fn available_ports() -> Vec<String> {
-        serialport::available_ports()
-            .map(|ports| ports.into_iter().map(|p| p.port_name).collect())
-            .unwrap_or_default()
-    }
-
-    pub async fn write(&self, name: &str, data: &bytes::Bytes) -> std::io::Result<usize> {
-        let inner_map = self.inner_map.read().await;
-
-        if let Some(inner) = inner_map.get(name) {
-            inner.write(data).await
-        } else {
-            Err(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                "SerialPort not found",
-            ))
-        }
-    }
-
-    pub async fn write_need_ack(&self, name: &str, data: &bytes::Bytes) -> std::io::Result<usize> {
-        let inner_map = self.inner_map.read().await;
-
-        if let Some(inner) = inner_map.get(name) {
-            inner.write_need_ack(data).await
-        } else {
-            Err(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                "SerialPort not found",
-            ))
-        }
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Duration, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let millis = u64::deserialize(deserializer)?;
+        Ok(Duration::from_millis(millis))
     }
 }
