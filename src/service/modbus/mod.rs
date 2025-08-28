@@ -1,0 +1,448 @@
+use std::time::Duration;
+use tokio::select;
+use tokio_modbus::{prelude::*, *};
+
+mod inner;
+
+pub struct ModbusRTUBuilder {
+    path: String,
+    slave: u8,
+    baud_rate: u32,
+    data_bits: serialport::DataBits,
+    parity: serialport::Parity,
+    stop_bits: serialport::StopBits,
+    flow_control: serialport::FlowControl,
+    timeout: Duration,
+}
+
+impl ModbusRTUBuilder {
+    pub fn new(path: &str, baud_rate: u32) -> Self {
+        ModbusRTUBuilder {
+            path: path.to_string(),
+            slave: 1,
+            baud_rate,
+            data_bits: serialport::DataBits::Eight,
+            parity: serialport::Parity::None,
+            stop_bits: serialport::StopBits::One,
+            flow_control: serialport::FlowControl::None,
+            timeout: Duration::from_millis(0),
+        }
+    }
+
+    pub fn with_slave(mut self, slave: u8) -> Self {
+        self.slave = slave;
+        self
+    }
+
+    pub fn with_data_bits(mut self, data_bits: serialport::DataBits) -> Self {
+        self.data_bits = data_bits;
+        self
+    }
+
+    pub fn with_parity(mut self, parity: serialport::Parity) -> Self {
+        self.parity = parity;
+        self
+    }
+
+    pub fn with_stop_bits(mut self, stop_bits: serialport::StopBits) -> Self {
+        self.stop_bits = stop_bits;
+        self
+    }
+
+    pub fn with_flow_control(mut self, flow_control: serialport::FlowControl) -> Self {
+        self.flow_control = flow_control;
+        self
+    }
+
+    pub fn with_timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = timeout;
+        self
+    }
+
+    pub fn build(self) -> ModbusService {
+        ModbusService {
+            inner: Box::new(inner::ModbusRTUContext {
+                path: self.path,
+                baud_rate: self.baud_rate,
+                data_bits: self.data_bits,
+                parity: self.parity,
+                stop_bits: self.stop_bits,
+                flow_control: self.flow_control,
+                timeout: self.timeout,
+                slave: self.slave,
+                ctx: None,
+            }),
+        }
+    }
+}
+
+pub struct ModbusTCPBuilder {
+    addr: String,
+    port: u16,
+    timeout: Duration,
+}
+
+impl ModbusTCPBuilder {
+    pub fn new(addr: String, port: u16) -> Self {
+        Self {
+            addr,
+            port,
+            timeout: Duration::from_millis(0),
+        }
+    }
+
+    pub fn timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = timeout;
+        self
+    }
+
+    pub fn build(self) -> ModbusService {
+        ModbusService {
+            inner: Box::new(inner::ModbusTCPContext {
+                addr: self.addr,
+                port: self.port,
+                timeout: self.timeout,
+                ctx: None,
+            }),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct ModbusService {
+    inner: Box<dyn inner::ModbusContext>,
+}
+
+impl ModbusService {
+    /// Read multiple coils (0x01)
+    pub async fn read_coils(&mut self, addr: u16, cnt: u16) -> tokio_modbus::Result<Vec<bool>> {
+        let _ = self.inner.connect().await?;
+        let will_timeout = self.inner.will_timeout();
+        let timeout = self.inner.timeout();
+        let ctx = self.inner.mut_context();
+        if !will_timeout {
+            return ctx.read_coils(addr, cnt).await;
+        }
+
+        select! {
+            result = ctx.read_coils(addr, cnt) => {
+                result
+            }
+            _ = tokio::time::sleep(timeout) => {
+                Err(tokio_modbus::Error::Transport(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "read_coils timed out",
+                )))
+            }
+        }
+    }
+
+    /// Read multiple discrete inputs (0x02)
+    pub async fn read_discrete_inputs(&mut self, addr: u16, cnt: u16) -> Result<Vec<bool>> {
+        let _ = self.inner.connect().await?;
+        let will_timeout = self.inner.will_timeout();
+        let timeout = self.inner.timeout();
+        let ctx = self.inner.mut_context();
+        if !will_timeout {
+            return ctx.read_discrete_inputs(addr, cnt).await;
+        }
+
+        select! {
+            result = ctx.read_discrete_inputs(addr, cnt) => {
+                result
+            }
+            _ = tokio::time::sleep(timeout) => {
+                Err(tokio_modbus::Error::Transport(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "read_discrete_inputs timed out",
+                )))
+            }
+        }
+    }
+
+    /// Read multiple holding registers (0x03)
+    pub async fn read_holding_registers(&mut self, addr: u16, cnt: u16) -> Result<Vec<u16>> {
+        let _ = self.inner.connect().await?;
+        let will_timeout = self.inner.will_timeout();
+        let timeout = self.inner.timeout();
+        let ctx = self.inner.mut_context();
+        if !will_timeout {
+            return ctx.read_holding_registers(addr, cnt).await;
+        }
+
+        select! {
+            result = ctx.read_holding_registers(addr, cnt) => {
+                result
+            }
+            _ = tokio::time::sleep(timeout) => {
+                Err(tokio_modbus::Error::Transport(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "read_holding_registers timed out",
+                )))
+            }
+        }
+    }
+
+    /// Read multiple input registers (0x04)
+    pub async fn read_input_registers(&mut self, addr: u16, cnt: u16) -> Result<Vec<u16>> {
+        let _ = self.inner.connect().await?;
+        let will_timeout = self.inner.will_timeout();
+        let timeout = self.inner.timeout();
+        let ctx = self.inner.mut_context();
+
+        if !will_timeout {
+            return ctx.read_input_registers(addr, cnt).await;
+        }
+
+        select! {
+            result = ctx.read_input_registers(addr, cnt) => {
+                result
+            }
+            _ = tokio::time::sleep(timeout) => {
+                Err(tokio_modbus::Error::Transport(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "read_input_registers timed out",
+                )))
+            }
+        }
+    }
+
+    /// Read and write multiple holding registers (0x17)
+    ///
+    /// The write operation is performed before the read unlike
+    /// the name of the operation might suggest!
+    pub async fn read_write_multiple_registers(
+        &mut self,
+        read_addr: u16,
+        read_count: u16,
+        write_addr: u16,
+        write_data: &[u16],
+    ) -> Result<Vec<u16>> {
+        let _ = self.inner.connect().await?;
+        let will_timeout = self.inner.will_timeout();
+        let timeout = self.inner.timeout();
+        let ctx = self.inner.mut_context();
+
+        if !will_timeout {
+            return ctx
+                .read_write_multiple_registers(read_addr, read_count, write_addr, write_data)
+                .await;
+        }
+
+        select! {
+            result = ctx.read_write_multiple_registers(read_addr, read_count, write_addr, write_data) => {
+                result
+            }
+            _ = tokio::time::sleep(timeout) => {
+                Err(tokio_modbus::Error::Transport(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "read_write_multiple_registers timed out",
+                )))
+            }
+        }
+    }
+
+    /// Write a single coil (0x05)
+    pub async fn write_single_coil(&mut self, addr: u16, coil: bool) -> tokio_modbus::Result<()> {
+        let _ = self.inner.connect().await?;
+        let will_timeout = self.inner.will_timeout();
+        let timeout = self.inner.timeout();
+        let ctx = self.inner.mut_context();
+
+        if !will_timeout {
+            return ctx.write_single_coil(addr, coil).await;
+        }
+
+        select! {
+            result = ctx.write_single_coil(addr, coil) => {
+                result
+            }
+            _ = tokio::time::sleep(timeout) => {
+                Err(tokio_modbus::Error::Transport(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "write_single_coil timed out",
+                )))
+            }
+        }
+    }
+
+    /// Write a single holding register (0x06)
+    pub async fn write_single_register(
+        &mut self,
+        addr: u16,
+        word: u16,
+    ) -> tokio_modbus::Result<()> {
+        let _ = self.inner.connect().await?;
+        let will_timeout = self.inner.will_timeout();
+        let timeout = self.inner.timeout();
+        let ctx = self.inner.mut_context();
+
+        if !will_timeout {
+            return ctx.write_single_register(addr, word).await;
+        }
+
+        select! {
+            result = ctx.write_single_register(addr, word) => {
+                result
+            }
+
+            _ = tokio::time::sleep(timeout) => {
+                Err(tokio_modbus::Error::Transport(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "write_single_coil timed out",
+                )))
+            }
+        }
+    }
+
+    /// Write multiple coils (0x0F)
+    pub async fn write_multiple_coils(
+        &mut self,
+        addr: u16,
+        coils: &[bool],
+    ) -> tokio_modbus::Result<()> {
+        let _ = self.inner.connect().await?;
+        let will_timeout = self.inner.will_timeout();
+        let timeout = self.inner.timeout();
+        let ctx = self.inner.mut_context();
+
+        if !will_timeout {
+            return ctx.write_multiple_coils(addr, coils).await;
+        }
+
+        select! {
+            result = ctx.write_multiple_coils(addr, coils) => {
+                result
+            }
+            _ = tokio::time::sleep(timeout) => {
+                Err(tokio_modbus::Error::Transport(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "write_multiple_coils timed out",
+                )))
+            }
+        }
+    }
+
+    /// Write multiple holding registers (0x10)
+    pub async fn write_multiple_registers(
+        &mut self,
+        addr: u16,
+        words: &[u16],
+    ) -> tokio_modbus::Result<()> {
+        let _ = self.inner.connect().await?;
+        let will_timeout = self.inner.will_timeout();
+        let timeout = self.inner.timeout();
+        let ctx = self.inner.mut_context();
+
+        if !will_timeout {
+            return ctx.write_multiple_registers(addr, words).await;
+        }
+
+        select! {
+            result = ctx.write_multiple_registers(addr, words) => {
+                result
+            }
+            _ = tokio::time::sleep(timeout) => {
+                Err(tokio_modbus::Error::Transport(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "write_multiple_registers timed out",
+                )))
+            }
+        }
+    }
+
+    /// Set or clear individual bits of a holding register (0x16)
+    pub async fn masked_write_register(
+        &mut self,
+        addr: u16,
+        and_mask: u16,
+        or_mask: u16,
+    ) -> tokio_modbus::Result<()> {
+        let _ = self.inner.connect().await?;
+        let will_timeout = self.inner.will_timeout();
+        let timeout = self.inner.timeout();
+        let ctx = self.inner.mut_context();
+
+        if !will_timeout {
+            return ctx.masked_write_register(addr, and_mask, or_mask).await;
+        }
+
+        select! {
+            result = ctx.masked_write_register(addr, and_mask, or_mask) => {
+                result
+            }
+            _ = tokio::time::sleep(timeout) => {
+                Err(tokio_modbus::Error::Transport(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "masked_write_register timed out",
+                )))
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn test_modbus() {
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::DEBUG)
+        .init();
+
+    let builder = ModbusRTUBuilder::new("/dev/tty.usbserial-0001", 9600)
+        .with_slave(1)
+        .with_timeout(std::time::Duration::from_secs(1));
+    let mut service = builder.build();
+
+    loop {
+        {
+            let result = service.read_coils(0x0001, 1).await;
+            tracing::debug!("{:?}", result);
+        }
+
+        {
+            let result = service.read_discrete_inputs(0x0001, 1).await;
+            tracing::debug!("{:?}", result);
+        }
+
+        {
+            let result = service.read_holding_registers(0x0001, 1).await;
+            tracing::debug!("{:?}", result);
+        }
+
+        {
+            let result = service.read_input_registers(0x0001, 1).await;
+            tracing::debug!("{:?}", result);
+        }
+
+        {
+            let result = service.read_write_multiple_registers(0x0001, 1, 0x0002, &[0x0001, 0x0002]).await;
+            tracing::debug!("{:?}", result);
+        }
+
+        {
+            let result = service.write_single_coil(0x0001, true).await;
+            tracing::debug!("{:?}", result);
+        }
+
+        {
+            let result = service.write_single_register(0x0001, 0x0001).await;
+            tracing::debug!("{:?}", result);
+        }
+
+        {
+            let result = service.write_multiple_coils(0x0001, &[true, false, true]).await;
+            tracing::debug!("{:?}", result);
+        }
+
+        {
+            let result = service.write_multiple_registers(0x0001, &[0x0001, 0x0002]).await;
+            tracing::debug!("{:?}", result);
+        }
+
+        {
+            let result = service.masked_write_register(0x0001, 0x0002, 0x0001).await;
+            tracing::debug!("{:?}", result);
+        }
+
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    }
+}

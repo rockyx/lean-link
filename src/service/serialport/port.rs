@@ -39,35 +39,35 @@ impl SerialPortBuilder {
         }
     }
 
-    pub fn with_data_bits(&mut self, data_bits: DataBits) -> &Self {
+    pub fn with_data_bits(mut self, data_bits: DataBits) -> Self {
         self.data_bits = data_bits;
         self
     }
 
-    pub fn with_flow_control(&mut self, flow_control: FlowControl) -> &Self {
+    pub fn with_flow_control(mut self, flow_control: FlowControl) -> Self {
         self.flow_control = flow_control;
         self
     }
 
-    pub fn with_parity(&mut self, parity: Parity) -> &Self {
+    pub fn with_parity(mut self, parity: Parity) -> Self {
         self.parity = parity;
         self
     }
 
-    pub fn with_stop_bits(&mut self, stop_bits: StopBits) -> &Self {
+    pub fn with_stop_bits(mut self, stop_bits: StopBits) -> Self {
         self.stop_bits = stop_bits;
         self
     }
 
-    pub fn with_timeout(&mut self, timeout: Duration) -> &Self {
+    pub fn with_timeout(mut self, timeout: Duration) -> Self {
         self.timeout = timeout;
         self
     }
 
-    pub fn build<T, C>(&self) -> SerialPort<T, C> {
+    pub fn build<T, C>(self) -> SerialPort<T, C> {
         SerialPort {
             framed: None,
-            path: self.path.clone(),
+            path: self.path,
             baud_rate: self.baud_rate,
             data_bits: self.data_bits,
             flow_control: self.flow_control,
@@ -121,24 +121,7 @@ where
                 }
                 Err(e) => {
                     self.framed = None;
-                    match e.kind() {
-                        serialport::ErrorKind::NoDevice => {
-                            return Err(std::io::Error::new(
-                                std::io::ErrorKind::NotFound,
-                                "SerialPort not found",
-                            ));
-                        }
-                        serialport::ErrorKind::Io(kind) => {
-                            return Err(std::io::Error::new(kind, e.to_string()));
-                        }
-                        _ => {
-                            tracing::error!("Error opening serial port: {:?}", e);
-                            return Err(std::io::Error::new(
-                                std::io::ErrorKind::Other,
-                                "Failed to open SerialPort",
-                            ));
-                        }
-                    }
+                    return Err(e.into());
                 }
             }
         }
@@ -189,13 +172,13 @@ where
                 }
             }
 
-            _ = tokio::time::sleep(self.timeout), if is_busy.load(Ordering::Acquire) => {
-                is_busy.store(false, Ordering::Release);
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::TimedOut,
-                    "SerialPort read timeout",
-                ));
-            }
+            // _ = tokio::time::sleep(self.timeout), if is_busy.load(Ordering::Acquire) => {
+            //     is_busy.store(false, Ordering::Release);
+            //     return Err(std::io::Error::new(
+            //         std::io::ErrorKind::TimedOut,
+            //         "SerialPort read timeout",
+            //     ));
+            // }
         }
     }
 }
