@@ -4,7 +4,7 @@ use tokio_modbus::prelude::*;
 #[async_trait::async_trait]
 pub trait ModbusContext: Debug {
     async fn connect(&mut self) -> tokio_modbus::Result<()>;
-    fn context(&self) -> &tokio_modbus::client::Context;
+    // fn context(&self) -> &tokio_modbus::client::Context;
     fn mut_context(&mut self) -> &mut tokio_modbus::client::Context;
     fn will_timeout(&self) -> bool;
     fn timeout(&self) -> Duration;
@@ -51,9 +51,9 @@ impl ModbusContext for ModbusRTUContext {
         Ok(Ok(()))
     }
 
-    fn context(&self) -> &tokio_modbus::client::Context {
-        self.ctx.as_ref().unwrap()
-    }
+    // fn context(&self) -> &tokio_modbus::client::Context {
+    //     self.ctx.as_ref().unwrap()
+    // }
 
     fn mut_context(&mut self) -> &mut tokio_modbus::client::Context {
         self.ctx.as_mut().unwrap()
@@ -97,9 +97,9 @@ impl ModbusContext for ModbusTCPContext {
         Ok(Ok(()))
     }
 
-    fn context(&self) -> &tokio_modbus::client::Context {
-        self.ctx.as_ref().unwrap()
-    }
+    // fn context(&self) -> &tokio_modbus::client::Context {
+    //     self.ctx.as_ref().unwrap()
+    // }
 
     fn mut_context(&mut self) -> &mut tokio_modbus::client::Context {
         self.ctx.as_mut().unwrap()
