@@ -1,10 +1,10 @@
-use directories::{BaseDirs, ProjectDirs};
-use serde::{Deserialize, Serialize};
+use directories::ProjectDirs;
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 #[cfg(any(feature = "modbus", feature = "serialport"))]
 use serialport::{DataBits, FlowControl, Parity, StopBits};
 use std::path::{Path, PathBuf};
 #[cfg(any(feature = "modbus", feature = "serialport", feature = "web"))]
-use std::time::Duration;
+use std::{fs::File, time::Duration};
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct DatabaseConfig {
@@ -136,8 +136,31 @@ pub fn get_config_path(app_name: &str) -> Option<PathBuf> {
     }
 }
 
+pub fn load_config<UserConfig>(app_name: &str) -> std::io::Result<ServerConfig<UserConfig>>
+where
+    UserConfig: DeserializeOwned + Serialize,
+{
+    let config_path = get_config_path(app_name).ok_or(std::io::Error::new(
+        std::io::ErrorKind::NotFound,
+        "Could not determine config path",
+    ))?;
+
+    let normalized_path = normpath::PathExt::normalize(config_path.as_path())?;
+
+    // 打开文件并解析
+    let file = File::open(normalized_path.as_path())?;
+    let config: ServerConfig<UserConfig> = serde_yaml::from_reader(file).map_err(|e| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("Failed to parse config: {}", e),
+        )
+    })?;
+    Ok(config)
+}
+
 #[test]
 fn test_get_config_path() {
+    use directories::BaseDirs;
     // println!("{}", std::env::current_exe().ok().unwrap().parent().unwrap().to_str().unwrap());
     println!("{:?}", std::env::current_exe().ok().unwrap());
     if cfg!(target_os = "linux") {
@@ -146,15 +169,17 @@ fn test_get_config_path() {
         expected_path.push("/etc");
         expected_path.push("my_app");
         expected_path.push("config.yaml");
-        assert_eq!(
-            linux_path,
-            Some(expected_path)
-        );
+        assert_eq!(linux_path, Some(expected_path));
     }
 
     if cfg!(target_os = "windows") {
         let windows_path = get_config_path("my_app");
-        let mut expected_path = std::env::current_exe().ok().unwrap().parent().unwrap().to_path_buf();
+        let mut expected_path = std::env::current_exe()
+            .ok()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .to_path_buf();
         expected_path.push("etc");
         expected_path.push("config.yaml");
         assert_eq!(windows_path, Some(expected_path));
@@ -176,4 +201,14 @@ fn test_get_config_path() {
 
         assert_eq!(macos_path, Some(expected_path));
     }
+}
+
+#[test]
+fn test_load_config() {
+    #[derive(Debug, Deserialize, Serialize)]
+    struct MyUserConfig {
+        pub custom_field: String,
+    }
+    let config: ServerConfig<MyUserConfig> = load_config("leanlink").expect("Failed to load config");
+    println!("{:#?}", config);
 }
