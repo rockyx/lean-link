@@ -3,7 +3,7 @@ pub mod database;
 pub mod utils;
 pub mod config;
 
-pub use lean_link_macros::*;
+// pub use lean_link_macros::*;
 
 pub struct AppState {
     db: std::sync::Arc<database::DbHelper>,
