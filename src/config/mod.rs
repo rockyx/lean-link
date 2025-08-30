@@ -154,8 +154,9 @@ fn test_get_config_path() {
 
     if cfg!(target_os = "windows") {
         let windows_path = get_config_path("my_app");
-        let mut expected_path = PathBuf::new();
-        expected_path.push("C:\\Program Files\\my_app\\etc\\config.yaml");
+        let mut expected_path = std::env::current_exe().ok().unwrap().parent().unwrap().to_path_buf();
+        expected_path.push("etc");
+        expected_path.push("config.yaml");
         assert_eq!(windows_path, Some(expected_path));
     }
 
