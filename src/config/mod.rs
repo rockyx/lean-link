@@ -145,6 +145,8 @@ where
         "Could not determine config path",
     ))?;
 
+    tracing::info!("Loading config from {:?}", config_path);
+
     let normalized_path = normpath::PathExt::normalize(config_path.as_path())?;
 
     // 打开文件并解析
