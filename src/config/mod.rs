@@ -6,20 +6,20 @@ use std::path::{Path, PathBuf};
 #[cfg(any(feature = "modbus", feature = "serialport", feature = "web"))]
 use std::{fs::File, time::Duration};
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct DatabaseConfig {
     pub url: String,
 }
 
 #[cfg(feature = "web")]
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct WebConfig {
     pub host: String,
     pub port: u16,
 }
 
 #[cfg(feature = "web")]
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct JwtConfig {
     pub secret: String,
     #[serde(with = "duration_seconds")]
@@ -48,14 +48,14 @@ pub mod duration_seconds {
 }
 
 #[cfg(feature = "modbus")]
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct ModbusTCPConfig {
     pub host: String,
     pub port: u16,
 }
 
 #[cfg(feature = "modbus")]
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct ModbusRTUConfig {
     pub path: String,
     pub baud_rate: u32,
@@ -102,7 +102,7 @@ pub struct SerialPortConfig {
     pub timeout: Duration,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct ServerConfig<UserConfig = ()> {
     pub database: DatabaseConfig,
     #[cfg(feature = "web")]
@@ -138,7 +138,7 @@ pub fn get_config_path(app_name: &str) -> Option<PathBuf> {
 
 pub fn load_config<UserConfig>(app_name: &str) -> std::io::Result<ServerConfig<UserConfig>>
 where
-    UserConfig: DeserializeOwned + Serialize,
+    UserConfig: DeserializeOwned + Serialize + Clone,
 {
     let config_path = get_config_path(app_name).ok_or(std::io::Error::new(
         std::io::ErrorKind::NotFound,
@@ -207,7 +207,7 @@ fn test_get_config_path() {
 
 #[test]
 fn test_load_config() {
-    #[derive(Debug, Deserialize, Serialize)]
+    #[derive(Debug, Deserialize, Serialize, Clone)]
     struct MyUserConfig {
         pub custom_field: String,
     }

@@ -110,7 +110,7 @@ impl ModbusTCPBuilder {
 
 #[derive(Debug)]
 pub struct ModbusService {
-    inner: Box<dyn inner::ModbusContext>,
+    inner: Box<dyn inner::ModbusContext + Send>,
 }
 
 impl ModbusService {
@@ -381,6 +381,90 @@ impl ModbusService {
     }
 }
 
+/// 将两个 u16 寄存器转换为 f32 浮点数
+/// reg1: 第一个寄存器值
+/// reg2: 第二个寄存器值
+/// register_order: 寄存器顺序
+///   - 'high_first': reg1 为高16位，reg2 为低16位
+///   - 'low_first': reg1 为低16位，reg2 为高16位
+/// byte_order: 字节顺序
+///   - 'big_endian': 大端序
+///   - 'little_endian': 小端序
+pub fn registers_to_f32(
+    reg1: u16,
+    reg2: u16,
+    register_order: &str,
+    byte_order: &str,
+) -> std::result::Result<f32, String> {
+    let mut bytes: [u8; 4] = [0; 4];
+
+    // 1. 先以大端存
+    match register_order {
+        "high_first" => {
+            bytes[0] = (reg1 >> 8) as u8;
+            bytes[1] = reg1 as u8;
+            bytes[2] = (reg2 >> 8) as u8;
+            bytes[3] = reg2 as u8;
+        }
+        "low_first" => {
+            bytes[0] = (reg2 >> 8) as u8;
+            bytes[1] = reg2 as u8;
+            bytes[2] = (reg1 >> 8) as u8;
+            bytes[3] = reg1 as u8;
+        }
+        _ => return Err("Invalid register order".into()),
+    };
+
+    // 2. 根据所需的字节序返回
+    match byte_order {
+        "big_endian" => Ok(f32::from_be_bytes(bytes)), // 已经是目标的大端序
+        "little_endian" => Ok(f32::from_le_bytes(bytes)),
+        _ => Err("Invalid byte order. Use 'big_endian' or 'little_endian'.".into()),
+    }
+}
+
+/// 将两个 u16 寄存器转换为 u32 整形
+/// reg1: 第一个寄存器值
+/// reg2: 第二个寄存器值
+/// register_order: 寄存器顺序
+///   - 'high_first': reg1 为高16位，reg2 为低16位
+///   - 'low_first': reg1 为低16位，reg2 为高16位
+/// byte_order: 字节顺序
+///   - 'big_endian': 大端序
+///   - 'little_endian': 小端序
+pub fn registers_to_u32(
+    reg1: u16,
+    reg2: u16,
+    register_order: &str,
+    byte_order: &str,
+) -> std::result::Result<u32, String> {
+    let mut bytes: [u8; 4] = [0; 4];
+
+    // 1. 先以大端存
+    match register_order {
+        "high_first" => {
+            bytes[0] = (reg1 >> 8) as u8;
+            bytes[1] = reg1 as u8;
+            bytes[2] = (reg2 >> 8) as u8;
+            bytes[3] = reg2 as u8;
+        }
+        "low_first" => {
+            bytes[0] = (reg2 >> 8) as u8;
+            bytes[1] = reg2 as u8;
+            bytes[2] = (reg1 >> 8) as u8;
+            bytes[3] = reg1 as u8;
+        }
+        _ => return Err("Invalid register order".into()),
+    };
+
+    // 2. 根据所需的字节序返回
+    match byte_order {
+        "big_endian" => Ok(u32::from_be_bytes(bytes)), // 已经是目标的大端序
+        "little_endian" => Ok(u32::from_le_bytes(bytes)),
+        _ => Err("Invalid byte order. Use 'big_endian' or 'little_endian'.".into()),
+    }
+}
+
 #[tokio::test]
 async fn test_modbus() {
     tracing_subscriber::fmt()
@@ -414,7 +498,9 @@ async fn test_modbus() {
         }
 
         {
-            let result = service.read_write_multiple_registers(0x0001, 1, 0x0002, &[0x0001, 0x0002]).await;
+            let result = service
+                .read_write_multiple_registers(0x0001, 1, 0x0002, &[0x0001, 0x0002])
+                .await;
             tracing::debug!("{:?}", result);
         }
 
@@ -429,12 +515,16 @@ async fn test_modbus() {
         }
 
         {
-            let result = service.write_multiple_coils(0x0001, &[true, false, true]).await;
+            let result = service
+                .write_multiple_coils(0x0001, &[true, false, true])
+                .await;
             tracing::debug!("{:?}", result);
         }
 
         {
-            let result = service.write_multiple_registers(0x0001, &[0x0001, 0x0002]).await;
+            let result = service
+                .write_multiple_registers(0x0001, &[0x0001, 0x0002])
+                .await;
             tracing::debug!("{:?}", result);
         }
 
@@ -444,5 +534,101 @@ async fn test_modbus() {
         }
 
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    }
+}
+
+#[test]
+fn test_reigsters_to_f32() {
+    // 示例：假设从 Modbus 读取的两个寄存器值
+    let mut reg_high = 0x42F1; // 高16位寄存器
+    let mut reg_low = 0x0000; // 低16位寄存器
+
+    match registers_to_f32(reg_high, reg_low, "high_first", "big_endian") {
+        Ok(value) => {
+            println!("转换后的浮点数为: {:.2}", value); // 期望输出 ~120.5
+            assert_eq!(value, 120.5);
+        }
+        Err(e) => eprintln!("转换错误: {}", e),
+    }
+
+    reg_high = 0x0000;
+    reg_low = 0x42F1;
+
+    match registers_to_f32(reg_high, reg_low, "low_first", "big_endian") {
+        Ok(value) => {
+            println!("转换后的浮点数为: {:.2}", value); // 期望输出 ~120.5
+            assert_eq!(value, 120.5);
+        }
+        Err(e) => eprintln!("转换错误: {}", e),
+    }
+
+    reg_high = 0x0000;
+    reg_low = 0xF142;
+
+    match registers_to_f32(reg_high, reg_low, "high_first", "little_endian") {
+        Ok(value) => {
+            println!("转换后的浮点数为: {:.2}", value); // 期望输出 ~120.5
+            assert_eq!(value, 120.5);
+        }
+        Err(e) => eprintln!("转换错误: {}", e),
+    }
+
+    reg_high = 0xF142;
+    reg_low = 0x0000;
+
+    match registers_to_f32(reg_high, reg_low, "low_first", "little_endian") {
+        Ok(value) => {
+            println!("转换后的浮点数为: {:.2}", value); // 期望输出 ~120.5
+            assert_eq!(value, 120.5);
+        }
+        Err(e) => eprintln!("转换错误: {}", e),
+    }
+}
+
+#[test]
+fn test_reigsters_to_u32() {
+    // 示例：假设从 Modbus 读取的两个寄存器值
+    let mut reg_high = 0x0000; // 高16位寄存器
+    let mut reg_low = 0x2710; // 低16位寄存器
+
+    match registers_to_u32(reg_high, reg_low, "high_first", "big_endian") {
+        Ok(value) => {
+            println!("转换后的浮点数为: {:.2}", value); // 期望输出 ~120.5
+            assert_eq!(value, 10000);
+        }
+        Err(e) => eprintln!("转换错误: {}", e),
+    }
+
+    reg_high = 0x2710;
+    reg_low = 0x0000;
+
+    match registers_to_u32(reg_high, reg_low, "low_first", "big_endian") {
+        Ok(value) => {
+            println!("转换后的浮点数为: {:.2}", value); // 期望输出 ~10000
+            assert_eq!(value, 10000);
+        }
+        Err(e) => eprintln!("转换错误: {}", e),
+    }
+
+    reg_high = 0x1027;
+    reg_low = 0x0000;
+
+    match registers_to_u32(reg_high, reg_low, "high_first", "little_endian") {
+        Ok(value) => {
+            println!("转换后的浮点数为: {:.2}", value); // 期望输出 ~10000
+            assert_eq!(value, 10000);
+        }
+        Err(e) => eprintln!("转换错误: {}", e),
+    }
+
+    reg_high = 0x0000;
+    reg_low = 0x1027;
+
+    match registers_to_u32(reg_high, reg_low, "low_first", "little_endian") {
+        Ok(value) => {
+            println!("转换后的浮点数为: {:.2}", value); // 期望输出 ~10000
+            assert_eq!(value, 10000);
+        }
+        Err(e) => eprintln!("转换错误: {}", e),
     }
 }
