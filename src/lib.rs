@@ -1,6 +1,7 @@
 pub mod service;
 pub mod database;
 pub mod utils;
+pub mod config;
 
 pub use lean_link_macros::*;
 

@@ -22,3 +22,5 @@ target
 
 # Cargo artifacts
 /Cargo.lock
+
+.vscode/
