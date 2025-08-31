@@ -211,6 +211,7 @@ fn test_load_config() {
     struct MyUserConfig {
         pub custom_field: String,
     }
-    let config: ServerConfig<MyUserConfig> = load_config("leanlink").expect("Failed to load config");
+    let config: ServerConfig<MyUserConfig> =
+        load_config("leanlink").expect("Failed to load config");
     println!("{:#?}", config);
 }
