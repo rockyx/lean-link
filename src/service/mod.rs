@@ -1,5 +1,7 @@
 #[cfg(feature = "web")]
 pub mod web;
+#[cfg(feature = "web")]
+pub mod websocket;
 #[cfg(feature = "mqtt")]
 pub mod mqtt;
 #[cfg(feature = "serialport")]

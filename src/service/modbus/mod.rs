@@ -121,12 +121,24 @@ impl ModbusService {
         let timeout = self.inner.timeout();
         let ctx = self.inner.mut_context();
         if !will_timeout {
-            return ctx.read_coils(addr, cnt).await;
+            match ctx.read_coils(addr, cnt).await {
+                Ok(res) => return Ok(res),
+                Err(e) => {
+                    self.inner.close();
+                    return Err(e);
+                }
+            }
         }
 
         select! {
             result = ctx.read_coils(addr, cnt) => {
-                result
+                match result {
+                    Ok(res) => Ok(res),
+                    Err(e) => {
+                        self.inner.close();
+                        Err(e)
+                    },
+                }
             }
             _ = tokio::time::sleep(timeout) => {
                 Err(tokio_modbus::Error::Transport(std::io::Error::new(
@@ -144,12 +156,24 @@ impl ModbusService {
         let timeout = self.inner.timeout();
         let ctx = self.inner.mut_context();
         if !will_timeout {
-            return ctx.read_discrete_inputs(addr, cnt).await;
+            match ctx.read_discrete_inputs(addr, cnt).await {
+                Ok(res) => return Ok(res),
+                Err(e) => {
+                    self.inner.close();
+                    return Err(e);
+                }
+            }
         }
 
         select! {
             result = ctx.read_discrete_inputs(addr, cnt) => {
-                result
+                match result {
+                    Ok(res) => Ok(res),
+                    Err(e) => {
+                        self.inner.close();
+                        Err(e)
+                    },
+                }
             }
             _ = tokio::time::sleep(timeout) => {
                 Err(tokio_modbus::Error::Transport(std::io::Error::new(
@@ -167,12 +191,24 @@ impl ModbusService {
         let timeout = self.inner.timeout();
         let ctx = self.inner.mut_context();
         if !will_timeout {
-            return ctx.read_holding_registers(addr, cnt).await;
+            match ctx.read_holding_registers(addr, cnt).await {
+                Ok(res) => return Ok(res),
+                Err(e) => {
+                    self.inner.close();
+                    return Err(e);
+                }
+            }
         }
 
         select! {
             result = ctx.read_holding_registers(addr, cnt) => {
-                result
+                match result {
+                    Ok(res) => Ok(res),
+                    Err(e) => {
+                        self.inner.close();
+                        Err(e)
+                    },
+                }
             }
             _ = tokio::time::sleep(timeout) => {
                 Err(tokio_modbus::Error::Transport(std::io::Error::new(
@@ -191,12 +227,24 @@ impl ModbusService {
         let ctx = self.inner.mut_context();
 
         if !will_timeout {
-            return ctx.read_input_registers(addr, cnt).await;
+            match ctx.read_input_registers(addr, cnt).await {
+                Ok(res) => return Ok(res),
+                Err(e) => {
+                    self.inner.close();
+                    return Err(e);
+                }
+            }
         }
 
         select! {
             result = ctx.read_input_registers(addr, cnt) => {
-                result
+                match result {
+                    Ok(res) => Ok(res),
+                    Err(e) => {
+                        self.inner.close();
+                        Err(e)
+                    }
+                }
             }
             _ = tokio::time::sleep(timeout) => {
                 Err(tokio_modbus::Error::Transport(std::io::Error::new(
@@ -224,14 +272,27 @@ impl ModbusService {
         let ctx = self.inner.mut_context();
 
         if !will_timeout {
-            return ctx
+            match ctx
                 .read_write_multiple_registers(read_addr, read_count, write_addr, write_data)
-                .await;
+                .await
+            {
+                Ok(res) => return Ok(res),
+                Err(e) => {
+                    self.inner.close();
+                    return Err(e);
+                }
+            }
         }
 
         select! {
             result = ctx.read_write_multiple_registers(read_addr, read_count, write_addr, write_data) => {
-                result
+                match result {
+                    Ok(res) => Ok(res),
+                    Err(e) => {
+                        self.inner.close();
+                        Err(e)
+                    }
+                }
             }
             _ = tokio::time::sleep(timeout) => {
                 Err(tokio_modbus::Error::Transport(std::io::Error::new(
@@ -250,12 +311,24 @@ impl ModbusService {
         let ctx = self.inner.mut_context();
 
         if !will_timeout {
-            return ctx.write_single_coil(addr, coil).await;
+            match ctx.write_single_coil(addr, coil).await {
+                Ok(res) => return Ok(res),
+                Err(e) => {
+                    self.inner.close();
+                    return Err(e);
+                }
+            }
         }
 
         select! {
             result = ctx.write_single_coil(addr, coil) => {
-                result
+                match result {
+                    Ok(res) => Ok(res),
+                    Err(e) => {
+                        self.inner.close();
+                        Err(e)
+                    }
+                }
             }
             _ = tokio::time::sleep(timeout) => {
                 Err(tokio_modbus::Error::Transport(std::io::Error::new(
@@ -278,12 +351,24 @@ impl ModbusService {
         let ctx = self.inner.mut_context();
 
         if !will_timeout {
-            return ctx.write_single_register(addr, word).await;
+            match ctx.write_single_register(addr, word).await {
+                Ok(res) => return Ok(res),
+                Err(e) => {
+                    self.inner.close();
+                    return Err(e);
+                }
+            }
         }
 
         select! {
             result = ctx.write_single_register(addr, word) => {
-                result
+                match result {
+                    Ok(res) => Ok(res),
+                    Err(e) => {
+                        self.inner.close();
+                        Err(e)
+                    }
+                }
             }
 
             _ = tokio::time::sleep(timeout) => {
@@ -307,12 +392,24 @@ impl ModbusService {
         let ctx = self.inner.mut_context();
 
         if !will_timeout {
-            return ctx.write_multiple_coils(addr, coils).await;
+            match ctx.write_multiple_coils(addr, coils).await {
+                Ok(res) => return Ok(res),
+                Err(e) => {
+                    self.inner.close();
+                    return Err(e);
+                }
+            }
         }
 
         select! {
             result = ctx.write_multiple_coils(addr, coils) => {
-                result
+                match result {
+                    Ok(res) => Ok(res),
+                    Err(e) => {
+                        self.inner.close();
+                        Err(e)
+                    }
+                }
             }
             _ = tokio::time::sleep(timeout) => {
                 Err(tokio_modbus::Error::Transport(std::io::Error::new(
@@ -335,12 +432,24 @@ impl ModbusService {
         let ctx = self.inner.mut_context();
 
         if !will_timeout {
-            return ctx.write_multiple_registers(addr, words).await;
+            match ctx.write_multiple_registers(addr, words).await {
+                Ok(res) => return Ok(res),
+                Err(e) => {
+                    self.inner.close();
+                    return Err(e);
+                }
+            }
         }
 
         select! {
             result = ctx.write_multiple_registers(addr, words) => {
-                result
+                match result {
+                    Ok(res) => Ok(res),
+                    Err(e) => {
+                        self.inner.close();
+                        Err(e)
+                    }
+                }
             }
             _ = tokio::time::sleep(timeout) => {
                 Err(tokio_modbus::Error::Transport(std::io::Error::new(
@@ -364,12 +473,24 @@ impl ModbusService {
         let ctx = self.inner.mut_context();
 
         if !will_timeout {
-            return ctx.masked_write_register(addr, and_mask, or_mask).await;
+            match ctx.masked_write_register(addr, and_mask, or_mask).await {
+                Ok(res) => return Ok(res),
+                Err(e) => {
+                    self.inner.close();
+                    return Err(e);
+                }
+            }
         }
 
         select! {
             result = ctx.masked_write_register(addr, and_mask, or_mask) => {
-                result
+                match result {
+                    Ok(res) => return Ok(res),
+                    Err(e) => {
+                        self.inner.close();
+                        return Err(e);
+                    }
+                }
             }
             _ = tokio::time::sleep(timeout) => {
                 Err(tokio_modbus::Error::Transport(std::io::Error::new(

@@ -8,6 +8,7 @@ pub trait ModbusContext: Debug {
     fn mut_context(&mut self) -> &mut tokio_modbus::client::Context;
     fn will_timeout(&self) -> bool;
     fn timeout(&self) -> Duration;
+    fn close(&mut self);
 }
 
 #[derive(Debug)]
@@ -66,6 +67,10 @@ impl ModbusContext for ModbusRTUContext {
     fn timeout(&self) -> Duration {
         self.timeout
     }
+
+    fn close(&mut self) {
+        self.ctx.take();
+    }
 }
 
 #[derive(Debug)]
@@ -111,6 +116,10 @@ impl ModbusContext for ModbusTCPContext {
 
     fn timeout(&self) -> Duration {
         self.timeout
+    }
+
+    fn close(&mut self) {
+        self.ctx.take();
     }
 }
 

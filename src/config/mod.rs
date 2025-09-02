@@ -20,6 +20,13 @@ pub struct WebConfig {
 
 #[cfg(feature = "web")]
 #[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct WebSocketConfig {
+    pub host: String,
+    pub port: u16,
+}
+
+#[cfg(feature = "web")]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct JwtConfig {
     pub secret: String,
     #[serde(with = "duration_seconds")]
@@ -109,6 +116,8 @@ pub struct ServerConfig<UserConfig = ()> {
     pub web: WebConfig,
     #[cfg(feature = "web")]
     pub jwt: JwtConfig,
+    #[cfg(feature = "web")]
+    pub web_socket: WebSocketConfig,
     #[cfg(feature = "modbus")]
     pub modbus_tcp: Vec<ModbusTCPConfig>,
     #[cfg(feature = "modbus")]
