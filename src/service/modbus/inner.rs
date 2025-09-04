@@ -8,7 +8,7 @@ pub trait ModbusContext: Debug {
     fn mut_context(&mut self) -> &mut tokio_modbus::client::Context;
     fn will_timeout(&self) -> bool;
     fn timeout(&self) -> Duration;
-    fn close(&mut self);
+    async fn close(&mut self);
 }
 
 #[derive(Debug)]
@@ -68,7 +68,10 @@ impl ModbusContext for ModbusRTUContext {
         self.timeout
     }
 
-    fn close(&mut self) {
+    async fn close(&mut self) {
+        if self.ctx.is_some() {
+            let _ = self.ctx.as_mut().unwrap().disconnect().await;
+        }
         self.ctx.take();
     }
 }
@@ -118,7 +121,10 @@ impl ModbusContext for ModbusTCPContext {
         self.timeout
     }
 
-    fn close(&mut self) {
+    async fn close(&mut self) {
+        if self.ctx.is_some() {
+            let _ = self.ctx.as_mut().unwrap().disconnect().await;
+        }
         self.ctx.take();
     }
 }

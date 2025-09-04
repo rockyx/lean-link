@@ -11,6 +11,11 @@ use tokio::{
 };
 use tokio_tungstenite::{accept_async, tungstenite::Message};
 
+pub enum WebSocketMessage {
+    NewConnected(String),
+    Message(Message),
+}
+
 #[derive(Clone)]
 pub struct WebSocketServer {
     writer_map: Arc<Mutex<HashMap<String, Sender<Message>>>>,
@@ -23,8 +28,12 @@ impl WebSocketServer {
         }
     }
 
-    pub async fn start(&self, addr: &str, port: &u16) -> std::io::Result<Receiver<Message>> {
-        let (read_sender, read_recver) = mpsc::channel::<Message>(1024);
+    pub async fn start(
+        &self,
+        addr: &str,
+        port: &u16,
+    ) -> std::io::Result<Receiver<WebSocketMessage>> {
+        let (read_sender, read_recver) = mpsc::channel::<WebSocketMessage>(1024);
         let addr = format!("{}:{}", addr, port);
         let listener = TcpListener::bind(&addr).await?;
 
@@ -40,8 +49,28 @@ impl WebSocketServer {
 
     pub async fn broadcast(&self, message: Message) {
         let mut writer_map = self.writer_map.lock().await;
+        if writer_map.is_empty() {
+            return;
+        }
+
+        if writer_map.len() == 1 {
+            let (_, writer) = writer_map.iter().next().unwrap();
+            let _ = writer.send(message).await;
+            return;
+        }
+        
+        let mut send_futures = Vec::new();
         for (_, writer) in writer_map.iter_mut() {
-            let _ = writer.send(message.clone()).await;
+            send_futures.push(writer.send(message.clone()));
+        }
+
+        futures::future::join_all(send_futures).await;
+    }
+
+    pub async fn send(&self, id: &str, message: Message) {
+        let mut writer_map = self.writer_map.lock().await;
+        if let Some(writer) = writer_map.get_mut(id) {
+            let _ = writer.send(message).await;
         }
     }
 }
@@ -49,7 +78,7 @@ impl WebSocketServer {
 async fn start_listening(
     listener: TcpListener,
     writer_map: Arc<Mutex<HashMap<String, Sender<Message>>>>,
-    read_sender: Sender<Message>,
+    read_sender: Sender<WebSocketMessage>,
 ) {
     while let Ok((stream, _)) = listener.accept().await {
         let writer_map = writer_map.clone();
@@ -60,7 +89,7 @@ async fn start_listening(
 async fn handle_connection(
     raw_stream: TcpStream,
     writer_map: Arc<Mutex<HashMap<String, Sender<Message>>>>,
-    read_sender: Sender<Message>,
+    read_sender: Sender<WebSocketMessage>,
 ) {
     let ws_stream = accept_async(raw_stream).await;
     if ws_stream.is_err() {
@@ -81,13 +110,16 @@ async fn handle_connection(
     );
 
     let (writer_send, mut writer_recv) = mpsc::channel::<Message>(100);
-
     {
         let mut writer_map = writer_map.lock().await;
         writer_map.insert(peer_addr.clone(), writer_send);
     }
+
     let (mut writer, mut reader) = ws_stream.split();
 
+    let _ = read_sender
+        .send(WebSocketMessage::NewConnected(peer_addr.clone()))
+        .await;
     loop {
         select! {
             message = reader.next() => {
@@ -95,7 +127,7 @@ async fn handle_connection(
                     Some(msg) => {
                         match msg {
                             Ok(data) => {
-                                let _ = read_sender.send(data).await;
+                                let _ = read_sender.send(WebSocketMessage::Message(data)).await;
                             },
                             Err(e) => {
                                 tracing::error!("WebSocket Error: {}", e);

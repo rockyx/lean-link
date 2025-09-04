@@ -124,7 +124,7 @@ impl ModbusService {
             match ctx.read_coils(addr, cnt).await {
                 Ok(res) => return Ok(res),
                 Err(e) => {
-                    self.inner.close();
+                    self.inner.close().await;
                     return Err(e);
                 }
             }
@@ -135,7 +135,7 @@ impl ModbusService {
                 match result {
                     Ok(res) => Ok(res),
                     Err(e) => {
-                        self.inner.close();
+                        self.inner.close().await;
                         Err(e)
                     },
                 }
@@ -159,7 +159,7 @@ impl ModbusService {
             match ctx.read_discrete_inputs(addr, cnt).await {
                 Ok(res) => return Ok(res),
                 Err(e) => {
-                    self.inner.close();
+                    self.inner.close().await;
                     return Err(e);
                 }
             }
@@ -170,7 +170,7 @@ impl ModbusService {
                 match result {
                     Ok(res) => Ok(res),
                     Err(e) => {
-                        self.inner.close();
+                        self.inner.close().await;
                         Err(e)
                     },
                 }
@@ -194,7 +194,7 @@ impl ModbusService {
             match ctx.read_holding_registers(addr, cnt).await {
                 Ok(res) => return Ok(res),
                 Err(e) => {
-                    self.inner.close();
+                    self.inner.close().await;
                     return Err(e);
                 }
             }
@@ -205,7 +205,7 @@ impl ModbusService {
                 match result {
                     Ok(res) => Ok(res),
                     Err(e) => {
-                        self.inner.close();
+                        self.inner.close().await;
                         Err(e)
                     },
                 }
@@ -230,7 +230,7 @@ impl ModbusService {
             match ctx.read_input_registers(addr, cnt).await {
                 Ok(res) => return Ok(res),
                 Err(e) => {
-                    self.inner.close();
+                    self.inner.close().await;
                     return Err(e);
                 }
             }
@@ -241,7 +241,7 @@ impl ModbusService {
                 match result {
                     Ok(res) => Ok(res),
                     Err(e) => {
-                        self.inner.close();
+                        self.inner.close().await;
                         Err(e)
                     }
                 }
@@ -278,7 +278,7 @@ impl ModbusService {
             {
                 Ok(res) => return Ok(res),
                 Err(e) => {
-                    self.inner.close();
+                    self.inner.close().await;
                     return Err(e);
                 }
             }
@@ -289,7 +289,7 @@ impl ModbusService {
                 match result {
                     Ok(res) => Ok(res),
                     Err(e) => {
-                        self.inner.close();
+                        self.inner.close().await;
                         Err(e)
                     }
                 }
@@ -314,7 +314,7 @@ impl ModbusService {
             match ctx.write_single_coil(addr, coil).await {
                 Ok(res) => return Ok(res),
                 Err(e) => {
-                    self.inner.close();
+                    self.inner.close().await;
                     return Err(e);
                 }
             }
@@ -325,7 +325,7 @@ impl ModbusService {
                 match result {
                     Ok(res) => Ok(res),
                     Err(e) => {
-                        self.inner.close();
+                        self.inner.close().await;
                         Err(e)
                     }
                 }
@@ -354,7 +354,7 @@ impl ModbusService {
             match ctx.write_single_register(addr, word).await {
                 Ok(res) => return Ok(res),
                 Err(e) => {
-                    self.inner.close();
+                    self.inner.close().await;
                     return Err(e);
                 }
             }
@@ -365,7 +365,7 @@ impl ModbusService {
                 match result {
                     Ok(res) => Ok(res),
                     Err(e) => {
-                        self.inner.close();
+                        self.inner.close().await;
                         Err(e)
                     }
                 }
@@ -395,7 +395,7 @@ impl ModbusService {
             match ctx.write_multiple_coils(addr, coils).await {
                 Ok(res) => return Ok(res),
                 Err(e) => {
-                    self.inner.close();
+                    self.inner.close().await;
                     return Err(e);
                 }
             }
@@ -406,7 +406,7 @@ impl ModbusService {
                 match result {
                     Ok(res) => Ok(res),
                     Err(e) => {
-                        self.inner.close();
+                        self.inner.close().await;
                         Err(e)
                     }
                 }
@@ -435,7 +435,7 @@ impl ModbusService {
             match ctx.write_multiple_registers(addr, words).await {
                 Ok(res) => return Ok(res),
                 Err(e) => {
-                    self.inner.close();
+                    self.inner.close().await;
                     return Err(e);
                 }
             }
@@ -446,7 +446,7 @@ impl ModbusService {
                 match result {
                     Ok(res) => Ok(res),
                     Err(e) => {
-                        self.inner.close();
+                        self.inner.close().await;
                         Err(e)
                     }
                 }
@@ -476,7 +476,7 @@ impl ModbusService {
             match ctx.masked_write_register(addr, and_mask, or_mask).await {
                 Ok(res) => return Ok(res),
                 Err(e) => {
-                    self.inner.close();
+                    self.inner.close().await;
                     return Err(e);
                 }
             }
@@ -487,7 +487,7 @@ impl ModbusService {
                 match result {
                     Ok(res) => return Ok(res),
                     Err(e) => {
-                        self.inner.close();
+                        self.inner.close().await;
                         return Err(e);
                     }
                 }
