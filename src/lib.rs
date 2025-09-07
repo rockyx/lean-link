@@ -1,16 +1,37 @@
-pub mod service;
-pub mod database;
-pub mod utils;
+use sea_orm::DatabaseConnection;
+use serde::{Serialize, de::DeserializeOwned};
+
+use crate::config::ServerConfig;
+
 pub mod config;
+pub mod database;
+pub mod service;
+pub mod utils;
 
 // pub use lean_link_macros::*;
 
-pub struct AppState {
-    db: std::sync::Arc<database::DbHelper>,
+pub struct AppState<UserState = (), UserConig = ()> {
+    pub db_conn: DatabaseConnection,
+    pub user_state: UserState,
+    pub server_config: ServerConfig<UserConig>,
+    pub server_name: String,
 }
 
-impl AppState {
-    pub fn get_db(&self) -> std::sync::Arc<database::DbHelper> {
-        self.db.clone()
+impl<UserState, UserConfig> AppState<UserState, UserConfig>
+where
+    UserConfig: DeserializeOwned + Serialize + Clone,
+{
+    pub fn new(
+        server_name: &str,
+        db_conn: &DatabaseConnection,
+        user_state: UserState,
+    ) -> std::io::Result<Self> {
+        let server_config = config::load_config::<UserConfig>(server_name)?;
+        Ok(Self {
+            db_conn: db_conn.clone(),
+            server_config,
+            server_name: server_name.to_string(),
+            user_state,
+        })
     }
 }

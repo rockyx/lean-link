@@ -17,6 +17,7 @@ name = "lean_link"
 path = "src/lib.rs"
 
 [dependencies]
+uuid = { version = "1", features = ["std", "serde", "v4", "v7"] }
 actix-web = { version = "4", optional = true }
 tracing-actix-web = { version = "*", optional = true }
 async-trait = "0.1.88"
