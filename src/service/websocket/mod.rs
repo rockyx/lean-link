@@ -13,7 +13,7 @@ use tokio_tungstenite::{accept_async, tungstenite::Message};
 
 pub enum WebSocketMessage {
     NewConnected(String),
-    Message(Message),
+    Message(String, Message),
 }
 
 #[derive(Clone)]
@@ -127,7 +127,7 @@ async fn handle_connection(
                     Some(msg) => {
                         match msg {
                             Ok(data) => {
-                                let _ = read_sender.send(WebSocketMessage::Message(data)).await;
+                                let _ = read_sender.send(WebSocketMessage::Message(peer_addr.clone(), data)).await;
                             },
                             Err(e) => {
                                 tracing::error!("WebSocket Error: {}", e);
