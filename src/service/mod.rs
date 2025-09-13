@@ -9,4 +9,4 @@ pub mod serialport;
 #[cfg(feature = "modbus")]
 pub mod modbus;
 
-pub mod error;
+pub mod errors;
