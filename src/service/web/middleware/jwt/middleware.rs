@@ -45,7 +45,7 @@ where
         // 验证Token
         if token.is_empty() {
             // 如果没有Token，则返回401错误
-            let res = req.error_response(crate::service::errors::Error::MissingToken);
+            let res = req.error_response(crate::errors::Error::MissingToken);
             return ok(res.map_into_right_body()).boxed_local();
         }
 

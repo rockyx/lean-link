@@ -1,12 +1,10 @@
-#[cfg(feature = "web")]
-pub mod web;
-#[cfg(feature = "web")]
-pub mod websocket;
+#[cfg(feature = "modbus")]
+pub mod modbus;
 #[cfg(feature = "mqtt")]
 pub mod mqtt;
 #[cfg(feature = "serialport")]
 pub mod serialport;
-#[cfg(feature = "modbus")]
-pub mod modbus;
-
-pub mod errors;
+#[cfg(feature = "web")]
+pub mod web;
+#[cfg(feature = "web")]
+pub mod websocket;

@@ -5,6 +5,7 @@ use crate::config::ServerConfig;
 
 pub mod config;
 pub mod database;
+pub mod errors;
 pub mod service;
 pub mod utils;
 
@@ -35,3 +36,5 @@ where
         })
     }
 }
+
+pub type Result<T> = std::result::Result<T, errors::Error>;

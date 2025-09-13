@@ -30,7 +30,7 @@ impl Claims {
 pub fn generate_token(
     claims: &Claims,
     secret_key: &str,
-) -> Result<String, crate::service::errors::Error> {
+) -> Result<String, crate::errors::Error> {
     let token = encode(
         &Header::default(),
         claims,
@@ -45,7 +45,7 @@ pub fn generate_token_with_defaults(
     sub: &Uuid,
     secret_key: &str,
     expiration_seconds: i64,
-) -> Result<String, crate::service::errors::Error> {
+) -> Result<String, crate::errors::Error> {
     let now = Utc::now();
     let iat = now.timestamp() as usize;
     let exp = (now + Duration::seconds(expiration_seconds)).timestamp() as usize;

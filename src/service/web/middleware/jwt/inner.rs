@@ -15,7 +15,7 @@ impl Inner {
         }
     }
 
-    pub fn validate(&self, token: &str) -> Result<super::Claims, crate::service::errors::Error> {
+    pub fn validate(&self, token: &str) -> Result<super::Claims, crate::errors::Error> {
         let validation = Validation::new(self.algorithm);
 
         let token_data = decode::<super::Claims>(
