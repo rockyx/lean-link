@@ -115,7 +115,7 @@ pub struct ModbusService {
 
 impl ModbusService {
     /// Read multiple coils (0x01)
-    pub async fn read_coils(&mut self, addr: u16, cnt: u16) -> tokio_modbus::Result<Vec<bool>> {
+    pub async fn read_coils(&mut self, addr: u16, cnt: u16) -> Result<Vec<bool>> {
         let _ = self.inner.connect().await?;
         let will_timeout = self.inner.will_timeout();
         let timeout = self.inner.timeout();
@@ -304,7 +304,7 @@ impl ModbusService {
     }
 
     /// Write a single coil (0x05)
-    pub async fn write_single_coil(&mut self, addr: u16, coil: bool) -> tokio_modbus::Result<()> {
+    pub async fn write_single_coil(&mut self, addr: u16, coil: bool) -> Result<()> {
         let _ = self.inner.connect().await?;
         let will_timeout = self.inner.will_timeout();
         let timeout = self.inner.timeout();
@@ -344,7 +344,7 @@ impl ModbusService {
         &mut self,
         addr: u16,
         word: u16,
-    ) -> tokio_modbus::Result<()> {
+    ) -> Result<()> {
         let _ = self.inner.connect().await?;
         let will_timeout = self.inner.will_timeout();
         let timeout = self.inner.timeout();
@@ -385,7 +385,7 @@ impl ModbusService {
         &mut self,
         addr: u16,
         coils: &[bool],
-    ) -> tokio_modbus::Result<()> {
+    ) -> Result<()> {
         let _ = self.inner.connect().await?;
         let will_timeout = self.inner.will_timeout();
         let timeout = self.inner.timeout();
@@ -425,7 +425,7 @@ impl ModbusService {
         &mut self,
         addr: u16,
         words: &[u16],
-    ) -> tokio_modbus::Result<()> {
+    ) -> Result<()> {
         let _ = self.inner.connect().await?;
         let will_timeout = self.inner.will_timeout();
         let timeout = self.inner.timeout();
@@ -466,7 +466,7 @@ impl ModbusService {
         addr: u16,
         and_mask: u16,
         or_mask: u16,
-    ) -> tokio_modbus::Result<()> {
+    ) -> Result<()> {
         let _ = self.inner.connect().await?;
         let will_timeout = self.inner.will_timeout();
         let timeout = self.inner.timeout();
