@@ -23,35 +23,17 @@ pub struct WebConfig {
 pub struct WebSocketConfig {
     pub host: String,
     pub port: u16,
+    pub max_connections: u32,
+    #[serde(with = "crate::utils::datetime::string_to_duration")]
+    pub heartbeat_interval: Duration,
 }
 
 #[cfg(feature = "web")]
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct JwtConfig {
     pub secret: String,
-    #[serde(with = "duration_seconds")]
-    pub expiration_seconds: Duration,
-}
-
-#[cfg(feature = "web")]
-pub mod duration_seconds {
-    use serde::{Deserialize, Deserializer, Serializer};
-    use std::time::Duration;
-
-    pub fn serialize<S>(duration: &Duration, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        serializer.serialize_u64(duration.as_secs() as u64)
-    }
-
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<Duration, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let secs = u64::deserialize(deserializer)?;
-        Ok(Duration::from_secs(secs))
-    }
+    #[serde(with = "crate::utils::datetime::string_to_duration")]
+    pub expires_in: Duration,
 }
 
 #[cfg(feature = "modbus")]
@@ -70,32 +52,10 @@ pub struct ModbusRTUConfig {
     pub stop_bits: StopBits,
     pub parity: Parity,
     pub flow_control: FlowControl,
-    #[serde(with = "duration_millis")]
+    #[serde(with = "crate::utils::datetime::string_to_duration")]
     pub timeout: Duration,
 }
 
-#[cfg(any(feature = "modbus", feature = "serialport"))]
-pub mod duration_millis {
-    use serde::{Deserialize, Deserializer, Serializer};
-    use std::time::Duration;
-
-    pub fn serialize<S>(duration: &Duration, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        serializer.serialize_u64(duration.as_millis() as u64)
-    }
-
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<Duration, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let millis = u64::deserialize(deserializer)?;
-        Ok(Duration::from_millis(millis))
-    }
-}
-
-/// 串口配置
 #[cfg(feature = "serialport")]
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct SerialPortConfig {
@@ -105,8 +65,21 @@ pub struct SerialPortConfig {
     pub stop_bits: StopBits,
     pub parity: Parity,
     pub flow_control: FlowControl,
-    #[serde(with = "duration_millis")]
+    #[serde(with = "crate::utils::datetime::string_to_duration")]
     pub timeout: Duration,
+}
+
+#[cfg(feature = "mqtt")]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+pub struct MqttConfig {
+    pub host: String,
+    pub port: u16,
+    pub username: String,
+    pub password: String,
+    pub client_id: String,
+    pub topic: Vec<String>,
+    #[serde(with = "crate::utils::datetime::string_to_duration")]
+    pub keep_alive: Duration,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -124,6 +97,8 @@ pub struct ServerConfig<UserConfig = ()> {
     pub modbus_rtu: Vec<ModbusRTUConfig>,
     #[cfg(feature = "serialport")]
     pub serialport: Vec<SerialPortConfig>,
+    #[cfg(feature = "mqtt")]
+    pub mqtt: Vec<MqttConfig>,
     // 用户自定义配置部分，默认为空单元类型
     #[serde(flatten)]
     pub user_config: UserConfig,
