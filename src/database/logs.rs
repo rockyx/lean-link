@@ -14,7 +14,7 @@ pub async fn insert_log(
 ) -> Result<InsertResult<t_logs::ActiveModel>, DbErr> {
     TLogs::insert(t_logs::ActiveModel {
         id: ActiveValue::not_set(),
-        user_id: ActiveValue::set(user_id),
+        user_id: ActiveValue::set(Some(user_id)),
         action: ActiveValue::set(action),
         details: ActiveValue::set(details),
         created_at: ActiveValue::not_set(),

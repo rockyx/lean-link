@@ -27,6 +27,8 @@ impl ActiveModelBehavior for ActiveModel {
     fn new() -> Self {
         Self {
             id: Set(Uuid::now_v7()),
+            created_at: Set(Local::now().fixed_offset()),
+            updated_at: Set(Local::now().fixed_offset()),
             ..ActiveModelTrait::default()
         }
     }

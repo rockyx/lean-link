@@ -1,5 +1,5 @@
 use rand::{Rng, distr::Alphanumeric};
-use rumqttc::{AsyncClient, ClientError, ConnectionError, Event, EventLoop, MqttOptions, QoS};
+use rumqttc::{AsyncClient, EventLoop, MqttOptions};
 use std::time::Duration;
 
 use crate::config::MqttConfig;

@@ -9,9 +9,7 @@ use uuid::Uuid;
 pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
     pub id: Uuid,
-    pub name: String,
-    pub sequence: i32,
-    pub description: Option<String>,
+    pub key: String,
     pub value: Json,
     #[serde(serialize_with = "to_local_time", rename = "createdAt")]
     pub created_at: DateTimeWithTimeZone,
@@ -28,6 +26,8 @@ impl ActiveModelBehavior for ActiveModel {
     fn new() -> Self {
         Self {
             id: Set(Uuid::now_v7()),
+            created_at: Set(Local::now().fixed_offset()),
+            updated_at: Set(Local::now().fixed_offset()),
             ..ActiveModelTrait::default()
         }
     }

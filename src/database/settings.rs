@@ -5,13 +5,12 @@ use sea_orm::{
 };
 use serde::{Serialize, de::DeserializeOwned};
 
-pub async fn setting_get_x<T>(conn: &DatabaseConnection, name: &str) -> Result<T, DbErr>
+pub async fn setting_get_x<T>(conn: &DatabaseConnection, key: &str) -> Result<T, DbErr>
 where
     T: DeserializeOwned + Default,
 {
     let model = TSettings::find()
-        .filter(t_settings::Column::Name.eq(name))
-        .filter(t_settings::Column::Sequence.eq(1))
+        .filter(t_settings::Column::Key.eq(key))
         .one(conn)
         .await?;
 
@@ -23,8 +22,7 @@ where
 
 pub async fn setting_set_x<T>(
     conn: &DatabaseConnection,
-    name: &str,
-    desc: &str,
+    key: &str,
     value: T,
 ) -> Result<(), DbErr>
 where
@@ -33,14 +31,12 @@ where
     let json_value = serde_json::to_value(value).map_err(|e| DbErr::Json(e.to_string()))?;
     TSettings::insert(t_settings::ActiveModel {
         id: ActiveValue::not_set(),
-        name: ActiveValue::set(name.into()),
-        sequence: ActiveValue::set(1.into()),
-        description: ActiveValue::set(Some(desc.into())),
+        key: ActiveValue::set(key.into()),
         value: ActiveValue::set(json_value),
         ..Default::default()
     })
     .on_conflict(
-        OnConflict::columns([t_settings::Column::Name, t_settings::Column::Sequence])
+        OnConflict::columns([t_settings::Column::Key])
             .update_column(t_settings::Column::Value)
             .to_owned(),
     )

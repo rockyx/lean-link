@@ -7,6 +7,7 @@ pub enum Error {
     #[error("Modbus Error: {0}")]
     Modbus(#[from] tokio_modbus::Error),
     #[error("Modbus Exception Code: {0}")]
+    #[cfg(feature = "modbus")]
     ModbusExceptionCode(#[from] tokio_modbus::ExceptionCode),
     #[cfg(feature = "web")]
     #[error("JWT Error: {0}")]
