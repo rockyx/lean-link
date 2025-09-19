@@ -1,5 +1,5 @@
 use directories::ProjectDirs;
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde::{Deserialize, Serialize};
 #[cfg(any(feature = "modbus", feature = "serialport"))]
 use serialport::{DataBits, FlowControl, Parity, StopBits};
 use std::path::{Path, PathBuf};
@@ -83,7 +83,7 @@ pub struct MqttConfig {
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
-pub struct ServerConfig<UserConfig = ()> {
+pub struct ServerConfig {
     pub database: DatabaseConfig,
     #[cfg(feature = "web")]
     pub web: WebConfig,
@@ -99,9 +99,6 @@ pub struct ServerConfig<UserConfig = ()> {
     pub serialport: Vec<SerialPortConfig>,
     #[cfg(feature = "mqtt")]
     pub mqtt: Vec<MqttConfig>,
-    // 用户自定义配置部分，默认为空单元类型
-    #[serde(flatten)]
-    pub user_config: UserConfig,
 }
 
 /// 获取跨平台配置文件路径
@@ -120,10 +117,7 @@ pub fn get_config_path(app_name: &str) -> Option<PathBuf> {
     }
 }
 
-pub fn load_config<UserConfig>(app_name: &str) -> std::io::Result<ServerConfig<UserConfig>>
-where
-    UserConfig: DeserializeOwned + Serialize + Clone,
-{
+pub fn load_config(app_name: &str) -> std::io::Result<ServerConfig> {
     let config_path = get_config_path(app_name).ok_or(std::io::Error::new(
         std::io::ErrorKind::NotFound,
         "Could not determine config path",
@@ -135,7 +129,7 @@ where
 
     // 打开文件并解析
     let file = File::open(normalized_path.as_path())?;
-    let config: ServerConfig<UserConfig> = serde_yaml::from_reader(file).map_err(|e| {
+    let config: ServerConfig = serde_yaml::from_reader(file).map_err(|e| {
         std::io::Error::new(
             std::io::ErrorKind::InvalidData,
             format!("Failed to parse config: {}", e),
@@ -191,11 +185,6 @@ fn test_get_config_path() {
 
 #[test]
 fn test_load_config() {
-    #[derive(Debug, Deserialize, Serialize, Clone)]
-    struct MyUserConfig {
-        pub custom_field: String,
-    }
-    let config: ServerConfig<MyUserConfig> =
-        load_config("leanlink").expect("Failed to load config");
+    let config: ServerConfig = load_config("leanlink").expect("Failed to load config");
     println!("{:#?}", config);
 }

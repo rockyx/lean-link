@@ -28,7 +28,7 @@ where
     forward_ready!(service);
 
     fn call(&self, req: ServiceRequest) -> Self::Future {
-        // 从Header提取Token
+        // Extract the token from the HTTP header
         let auth_header = req.headers().get("Authorization");
         let token = match auth_header {
             Some(header) => {
@@ -42,16 +42,16 @@ where
             None => "".to_string(),
         };
 
-        // 验证Token
+        // Verify the token
         if token.is_empty() {
-            // 如果没有Token，则返回401错误
+            // If no token is provided, a 401 Unauthorized error is returned.
             let res = req.error_response(crate::errors::Error::MissingToken);
             return ok(res.map_into_right_body()).boxed_local();
         }
 
         match self.inner.validate(token.as_str()) {
             Ok(claims) => {
-                // 将用户信息存入请求扩展，供后续处理使用
+                // Attach user information to the request context for later access.
                 req.extensions_mut().insert(claims);
                 let fut = self.service.call(req);
                 Box::pin(async move {
@@ -60,7 +60,7 @@ where
                 })
             }
             Err(e) => {
-                // 如果Token验证失败，则返回401错误
+                // If the token validation fails, return a 401 error.
                 let res = req.error_response(e);
                 ok(res.map_into_right_body()).boxed_local()
             }

@@ -28,8 +28,52 @@ where
     serializer.serialize_str(&local_time.to_rfc3339())
 }
 
+pub mod local_time {
+    use super::to_local_time;
+    use chrono::{DateTime, FixedOffset};
+    use serde::{Deserialize, Deserializer, Serializer, de::Error};
+
+    pub fn serialize<S>(dt: &DateTime<FixedOffset>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        to_local_time(dt, serializer)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<DateTime<FixedOffset>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        DateTime::parse_from_rfc3339(&s)
+            .map_err(|_| D::Error::custom(format!("Invalid datetime format: {}", s)))
+    }
+}
+pub mod local_time_option {
+    use super::to_local_time_option;
+    use chrono::{DateTime, FixedOffset};
+    use serde::{Deserialize, Deserializer, Serializer, de::Error};
+
+    pub fn serialize<S>(dt: &Option<DateTime<FixedOffset>>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        to_local_time_option(dt, serializer)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<DateTime<FixedOffset>>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        let result = DateTime::parse_from_rfc3339(&s)
+            .map_err(|_| D::Error::custom(format!("Invalid datetime format: {}", s)))?;
+        Ok(Some(result))
+    }
+}
+
 pub mod string_to_duration {
-    use serde::{Deserialize, Deserializer, Serializer};
+    use serde::{Deserialize, Deserializer, Serializer, de::Error};
     use std::time::Duration;
 
     pub fn serialize<S>(duration: &Duration, serializer: S) -> Result<S::Ok, S::Error>
@@ -43,8 +87,6 @@ pub mod string_to_duration {
     where
         D: Deserializer<'de>,
     {
-        use serde::de::Error;
-
         let s = String::deserialize(deserializer)?;
 
         // Number is an integer followed (without a space) by a unit of time.​​
