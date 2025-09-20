@@ -1,5 +1,7 @@
+pub use builder::Jwt;
 use chrono::{Duration, Utc};
-use jsonwebtoken::{EncodingKey, Header, encode};
+pub use jsonwebtoken::*;
+pub use middleware::JwtMiddleware;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -27,10 +29,7 @@ impl Claims {
 }
 
 /// generate JWT token
-pub fn generate_token(
-    claims: &Claims,
-    secret_key: &str,
-) -> Result<String, crate::errors::Error> {
+pub fn generate_token(claims: &Claims, secret_key: &str) -> Result<String, crate::errors::Error> {
     let token = encode(
         &Header::default(),
         claims,
