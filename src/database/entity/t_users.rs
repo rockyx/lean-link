@@ -6,17 +6,18 @@ use uuid::Uuid;
 
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Deserialize, Serialize)]
 #[sea_orm(table_name = "t_users")]
+#[serde(rename_all = "camelCase")]
 pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
     pub id: Uuid,
     #[sea_orm(unique_index)]
     pub username: String,
     pub password: String,
-    #[serde(serialize_with = "to_local_time", rename = "createdAt")]
+    #[serde(serialize_with = "to_local_time")]
     pub created_at: DateTimeWithTimeZone,
-    #[serde(serialize_with = "to_local_time", rename = "updatedAt")]
+    #[serde(serialize_with = "to_local_time")]
     pub updated_at: DateTimeWithTimeZone,
-    #[serde(serialize_with = "to_local_time_option", rename = "deletedAt")]
+    #[serde(serialize_with = "to_local_time_option")]
     pub deleted_at: Option<DateTimeWithTimeZone>,
 }
 

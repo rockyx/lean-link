@@ -10,14 +10,15 @@ pub struct UserLoginRequest {
 }
 
 #[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct User {
     pub id: Uuid,
     pub username: String,
-    #[serde(with = "local_time", rename = "createdAt")]
+    #[serde(with = "local_time")]
     pub created_at: chrono::DateTime<chrono::FixedOffset>,
-    #[serde(with = "local_time", rename = "updatedAt")]
+    #[serde(with = "local_time")]
     pub updated_at: chrono::DateTime<chrono::FixedOffset>,
-    #[serde(with = "local_time_option", rename = "deletedAt")]
+    #[serde(with = "local_time_option")]
     pub deleted_at: Option<chrono::DateTime<chrono::FixedOffset>>,
 }
 

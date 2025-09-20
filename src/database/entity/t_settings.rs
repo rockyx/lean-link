@@ -6,16 +6,17 @@ use uuid::Uuid;
 
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Deserialize, Serialize)]
 #[sea_orm(table_name = "t_settings")]
+#[serde(rename_all = "camelCase")]
 pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
     pub id: Uuid,
     pub key: String,
     pub value: Json,
-    #[serde(serialize_with = "to_local_time", rename = "createdAt")]
+    #[serde(serialize_with = "to_local_time")]
     pub created_at: DateTimeWithTimeZone,
-    #[serde(serialize_with = "to_local_time", rename = "updatedAt")]
+    #[serde(serialize_with = "to_local_time")]
     pub updated_at: DateTimeWithTimeZone,
-    #[serde(serialize_with = "to_local_time_option", rename = "deletedAt")]
+    #[serde(serialize_with = "to_local_time_option")]
     pub deleted_at: Option<DateTimeWithTimeZone>,
 }
 
