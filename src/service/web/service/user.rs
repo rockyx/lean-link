@@ -46,19 +46,19 @@ pub mod api {
     async fn login(
         app_state: web::Data<AppState>,
         req: web::Json<UserLoginRequest>,
-    ) -> actix_web::Result<web::Json<WebResponse<UserLoginResponse>>> {
+    ) -> actix_web::Result<web::Json<WebResponse<UserLoginResponse>>, crate::errors::Error> {
         let db_conn = &app_state.db_conn;
 
         let user = match users::find_user_by_name(db_conn, req.username.clone()).await {
             Ok(Some(user)) => user,
             Ok(None) => {
-                return Ok(
-                    WebResponse::with_error_code(ErrorCode::InvalidUsernameOrPassword).into(),
-                );
+                return Err(crate::errors::Error::AuthorizationFail(
+                    ErrorCode::InvalidUsernameOrPassword,
+                ));
             }
             Err(e) => {
                 tracing::error!(error = ?e);
-                return Ok(WebResponse::with_error_code(ErrorCode::InternalError).into());
+                return Err(crate::errors::Error::DbErr(e));
             }
         };
 
@@ -66,12 +66,12 @@ pub mod api {
             Ok(verify) => verify,
             Err(e) => {
                 tracing::error!(error = ?e);
-                return Ok(WebResponse::with_error_code(ErrorCode::InternalError).into());
+                return Err(crate::errors::Error::InternalError(ErrorCode::InternalError));
             }
         };
 
         if !verify_password {
-            return Ok(WebResponse::with_error_code(ErrorCode::InvalidUsernameOrPassword).into());
+            return Err(crate::errors::Error::AuthorizationFail(ErrorCode::InvalidUsernameOrPassword));
         }
 
         let token = match jwt::generate_token_with_defaults(
@@ -82,7 +82,7 @@ pub mod api {
             Ok(token) => token,
             Err(e) => {
                 tracing::error!(error = ?e);
-                return Ok(WebResponse::with_error_code(ErrorCode::InternalError).into());
+                return Err(e);
             }
         };
         let resp = UserLoginResponse {

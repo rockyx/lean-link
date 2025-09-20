@@ -1,3 +1,6 @@
+#[cfg(feature = "web")]
+use crate::service::web::service::{ErrorCode, WebResponse};
+
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     /// IO Error
@@ -15,6 +18,16 @@ pub enum Error {
     #[cfg(feature = "web")]
     #[error("Missing Token")]
     MissingToken,
+    #[error("Database Error: {0}")]
+    DbErr(#[from] sea_orm::DbErr),
+    #[error("Json Error: {0}")]
+    Json(#[from] serde_json::Error),
+    #[cfg(feature = "web")]
+    #[error("Authorization Fail")]
+    AuthorizationFail(ErrorCode),
+    #[cfg(feature = "web")]
+    #[error("Internal Error")]
+    InternalError(ErrorCode),
 }
 
 #[cfg(feature = "web")]
@@ -23,6 +36,10 @@ impl actix_web::error::ResponseError for Error {
         match *self {
             Error::Jwt(_) => actix_web::http::StatusCode::UNAUTHORIZED,
             Error::MissingToken => actix_web::http::StatusCode::UNAUTHORIZED,
+            #[cfg(feature = "web")]
+            Error::AuthorizationFail(_) => actix_web::http::StatusCode::UNAUTHORIZED,
+            #[cfg(feature = "web")]
+            Error::InternalError(_) => actix_web::http::StatusCode::INTERNAL_SERVER_ERROR,
             _ => actix_web::http::StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
@@ -32,6 +49,16 @@ impl actix_web::error::ResponseError for Error {
             Error::Jwt(err) => actix_web::HttpResponse::Unauthorized().body(format!("{}", err)),
             Error::MissingToken => {
                 actix_web::HttpResponse::new(actix_web::http::StatusCode::UNAUTHORIZED)
+            }
+            #[cfg(feature = "web")]
+            Error::AuthorizationFail(code) => {
+                actix_web::HttpResponse::build(actix_web::http::StatusCode::UNAUTHORIZED)
+                    .json(WebResponse::<()>::with_error_code(code))
+            }
+            #[cfg(feature = "web")]
+            Error::InternalError(code) => {
+                actix_web::HttpResponse::build(actix_web::http::StatusCode::INTERNAL_SERVER_ERROR)
+                    .json(WebResponse::<()>::with_error_code(code))
             }
             _ => actix_web::HttpResponse::new(actix_web::http::StatusCode::INTERNAL_SERVER_ERROR),
         }

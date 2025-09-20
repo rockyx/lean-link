@@ -5,7 +5,7 @@ pub mod user;
 
 #[derive(Serialize, Deserialize)]
 #[repr(u32)]
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum ErrorCode {
     Success = 0,
     InvalidUsernameOrPassword = 10001,
@@ -30,12 +30,10 @@ pub struct WebResponse<T> {
 }
 
 impl<T> WebResponse<T>
-where
-    T: Serialize + for<'a> Deserialize<'a>,
 {
-    pub fn with_error_code(code: ErrorCode) -> Self {
+    pub fn with_error_code(code: &ErrorCode) -> Self {
         Self {
-            code,
+            code: code.clone(),
             success: false,
             timestamp: chrono::Local::now().timestamp(),
             result: None,
@@ -43,16 +41,21 @@ where
         }
     }
 
-    pub fn with_error_code_and_message(code: ErrorCode, message: String) -> Self {
+    pub fn with_error_code_and_message(code: &ErrorCode, message: String) -> Self {
         Self {
-            code,
+            code: code.clone(),
             success: false,
             timestamp: chrono::Local::now().timestamp(),
             result: None,
             message,
         }
     }
+}
 
+impl<T> WebResponse<T>
+where
+    T: Serialize + for<'a> Deserialize<'a>,
+{
     pub fn with_result(result: T) -> Self {
         Self {
             code: ErrorCode::Success,
