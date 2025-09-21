@@ -53,6 +53,8 @@ actix-utils = "3.0.1"
 anyhow = "1.0.99"
 rand = "0.9.2"
 regex = "1.11.2"
+tsink = "0.3.1"
+crc = "3.3.0"
 
 [dev-dependencies]
 

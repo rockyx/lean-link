@@ -1,4 +1,6 @@
 use directories::ProjectDirs;
+#[cfg(feature = "mqtt")]
+use rumqttc::QoS;
 use serde::{Deserialize, Serialize};
 #[cfg(any(feature = "modbus", feature = "serialport"))]
 use serialport::{DataBits, FlowControl, Parity, StopBits};
@@ -71,15 +73,53 @@ pub struct SerialPortConfig {
 
 #[cfg(feature = "mqtt")]
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+pub struct MqttTopic {
+    pub topic: String,
+    #[serde(with = "string_to_qos")]
+    pub qos: QoS,
+}
+
+#[cfg(feature = "mqtt")]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct MqttConfig {
     pub host: String,
     pub port: u16,
     pub username: String,
     pub password: String,
     pub client_id: String,
-    pub topic: Vec<String>,
+    pub topic: Vec<MqttTopic>,
     #[serde(with = "crate::utils::datetime::string_to_duration")]
     pub keep_alive: Duration,
+}
+
+#[cfg(feature = "mqtt")]
+mod string_to_qos {
+    use rumqttc::QoS;
+    use serde::{Deserialize, Deserializer, Serializer, de::Error};
+
+    pub fn serialize<S>(qos: &QoS, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match qos {
+            QoS::AtMostOnce => serializer.serialize_str("AtMostOnce"),
+            QoS::AtLeastOnce => serializer.serialize_str("AtLeastOnce"),
+            QoS::ExactlyOnce => serializer.serialize_str("ExactlyOnce"),
+        }
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<QoS, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        match s.as_str() {
+            "AtMostOnce" => Ok(QoS::AtMostOnce),
+            "AtLeastOnce" => Ok(QoS::AtLeastOnce),
+            "ExactlyOnce" => Ok(QoS::ExactlyOnce),
+            _ => Err(D::Error::custom(format!("Invalid QoS: {}", s))),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -101,18 +141,18 @@ pub struct ServerConfig {
     pub mqtt: Vec<MqttConfig>,
 }
 
-/// 获取跨平台配置文件路径
+/// Get the cross-platform configuration file path
 pub fn get_config_path(app_name: &str) -> Option<PathBuf> {
-    // 区分操作系统
+    // Differentiate operating systems
     if cfg!(target_os = "linux") {
         // Linux: /etc/app-name/config.yaml
         Some(Path::new("/etc").join(app_name).join("config.yaml"))
     } else if cfg!(target_os = "windows") {
-        // Windows: 应用安装目录下的 etc/config.yaml
+        // Windows: Application installation directory etc/config.yaml
         let exe_dir = std::env::current_exe().ok()?.parent()?.to_path_buf();
         Some(exe_dir.join("etc").join("config.yaml"))
     } else {
-        // 其他系统（如 macOS）使用标准配置目录
+        // Other systems (such as macOS) use standard configuration directories
         ProjectDirs::from("com", "", app_name).map(|dirs| dirs.config_dir().join("config.yaml"))
     }
 }

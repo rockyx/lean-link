@@ -29,8 +29,7 @@ pub struct WebResponse<T> {
     pub message: String,
 }
 
-impl<T> WebResponse<T>
-{
+impl<T> WebResponse<T> {
     pub fn with_error_code(code: &ErrorCode) -> Self {
         Self {
             code: code.clone(),
@@ -81,4 +80,13 @@ impl<T> Into<web::Json<WebResponse<T>>> for WebResponse<T> {
     fn into(self) -> web::Json<Self> {
         web::Json(self)
     }
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct Pagination<D> {
+    pub records: Vec<D>,
+    pub total: u64,
+    pub current: u64,
+    pub size: u64,
+    pub pages: u64,
 }

@@ -28,6 +28,10 @@ pub enum Error {
     #[cfg(feature = "web")]
     #[error("Internal Error")]
     InternalError(ErrorCode),
+    #[error("TSink Error: {0}")]
+    Tsink(#[from] tsink::TsinkError),
+    #[error("Configure Error")]
+    Configure,
 }
 
 #[cfg(feature = "web")]
