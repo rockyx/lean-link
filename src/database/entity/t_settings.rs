@@ -8,8 +8,9 @@ use uuid::Uuid;
 #[sea_orm(table_name = "t_settings")]
 #[serde(rename_all = "camelCase")]
 pub struct Model {
-    #[sea_orm(primary_key, auto_increment = false)]
+    #[sea_orm(primary_key, auto_increment = false, default = "Uuid::now_v7()")]
     pub id: Uuid,
+    #[sea_orm(unique)]
     pub key: String,
     pub value: Json,
     #[serde(serialize_with = "to_local_time")]
@@ -23,36 +24,30 @@ pub struct Model {
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {}
 
+#[async_trait::async_trait]
 impl ActiveModelBehavior for ActiveModel {
     fn new() -> Self {
         Self {
             id: Set(Uuid::now_v7()),
-            created_at: Set(Local::now().fixed_offset()),
-            updated_at: Set(Local::now().fixed_offset()),
+            created_at: Set(DateTimeWithTimeZone::from(Local::now().fixed_offset())),
+            updated_at: Set(DateTimeWithTimeZone::from(Local::now().fixed_offset())),
             ..ActiveModelTrait::default()
         }
     }
 
-    fn before_save<'life0, 'async_trait, C>(
-        mut self,
-        _db: &'life0 C,
-        _insert: bool,
-    ) -> ::core::pin::Pin<
-        Box<
-            dyn ::core::future::Future<Output = Result<Self, DbErr>>
-                + ::core::marker::Send
-                + 'async_trait,
-        >,
-    >
+    async fn before_save<C>(mut self, _db: &C, insert: bool) -> Result<Self, DbErr>
     where
         C: ConnectionTrait,
-        C: 'async_trait,
-        'life0: 'async_trait,
-        Self: ::core::marker::Send + 'async_trait,
     {
-        Box::pin(async move {
-            self.updated_at = Set(Local::now().fixed_offset());
-            Ok(self)
-        })
+        tracing::info!("before save");
+        if insert {
+            self.id = Set(Uuid::now_v7());
+            self.created_at = Set(DateTimeWithTimeZone::from(Local::now()));
+            self.updated_at = Set(DateTimeWithTimeZone::from(Local::now()));
+        }
+        else {
+            self.updated_at = Set(DateTimeWithTimeZone::from(Local::now()));
+        }
+        Ok(self)
     }
 }

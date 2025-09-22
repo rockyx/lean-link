@@ -1,5 +1,6 @@
 use std::{collections::HashMap, sync::Arc};
 
+use bytes::Bytes;
 use futures::{SinkExt, StreamExt};
 use tokio::{
     net::{TcpListener, TcpStream},
@@ -11,6 +12,7 @@ use tokio::{
 };
 use tokio_tungstenite::{accept_async, tungstenite::Message};
 
+#[derive(Debug)]
 pub enum WebSocketMessage {
     NewConnected(String),
     Message(String, Message),
@@ -58,7 +60,7 @@ impl WebSocketServer {
             let _ = writer.send(message).await;
             return;
         }
-        
+
         let mut send_futures = Vec::new();
         for (_, writer) in writer_map.iter_mut() {
             send_futures.push(writer.send(message.clone()));
@@ -127,7 +129,14 @@ async fn handle_connection(
                     Some(msg) => {
                         match msg {
                             Ok(data) => {
-                                let _ = read_sender.send(WebSocketMessage::Message(peer_addr.clone(), data)).await;
+                                match data {
+                                    Message::Ping(_) => {
+                                        let _ = writer.send(Message::Pong(Bytes::new())).await;
+                                    },
+                                    _ => {
+                                        let _ = read_sender.send(WebSocketMessage::Message(peer_addr.clone(), data)).await;
+                                    }
+                                }
                             },
                             Err(e) => {
                                 tracing::error!("WebSocket Error: {}", e);

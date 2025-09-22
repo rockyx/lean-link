@@ -9,6 +9,7 @@ pub mod user;
 pub enum ErrorCode {
     Success = 0,
     InvalidUsernameOrPassword = 10001,
+    Unauthorized = 10002,
     InternalError = 50001,
 }
 

@@ -9,7 +9,7 @@ pub mod builder;
 pub(crate) mod inner;
 pub mod middleware;
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Claims {
     pub sub: Uuid,
     pub exp: usize,
