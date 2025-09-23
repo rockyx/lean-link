@@ -1,10 +1,15 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 pub use tsink::*;
 
 fn get_td_path() -> Option<PathBuf> {
-    let exe_dir = std::env::current_exe().ok()?.parent()?.to_path_buf();
-    Some(exe_dir.join("td"))
+    // Differentiate operating systems
+    if cfg!(target_os = "linux") {
+        Some(Path::new("/var/lib").into())
+    } else {
+        let exe_dir = std::env::current_exe().ok()?.parent()?.to_path_buf();
+        Some(exe_dir.join("td"))
+    }
 }
 pub fn persistent_storage() -> tsink::StorageBuilder {
     let td_path = get_td_path();
