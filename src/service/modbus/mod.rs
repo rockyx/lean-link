@@ -108,7 +108,6 @@ impl ModbusTCPBuilder {
     }
 }
 
-#[derive(Debug)]
 pub struct ModbusService {
     inner: Box<dyn inner::ModbusContext + Send>,
 }

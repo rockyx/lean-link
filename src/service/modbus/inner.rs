@@ -1,8 +1,8 @@
-use std::{fmt::Debug, time::Duration};
+use std::time::Duration;
 use tokio_modbus::prelude::*;
 
 #[async_trait::async_trait]
-pub trait ModbusContext: Debug {
+pub trait ModbusContext {
     async fn connect(&mut self) -> tokio_modbus::Result<()>;
     // fn context(&self) -> &tokio_modbus::client::Context;
     fn mut_context(&mut self) -> &mut tokio_modbus::client::Context;
@@ -11,7 +11,6 @@ pub trait ModbusContext: Debug {
     async fn close(&mut self);
 }
 
-#[derive(Debug)]
 pub struct ModbusRTUContext {
     pub path: String,
     pub baud_rate: u32,
@@ -76,7 +75,6 @@ impl ModbusContext for ModbusRTUContext {
     }
 }
 
-#[derive(Debug)]
 pub struct ModbusTCPContext {
     pub addr: String,
     pub port: u16,
