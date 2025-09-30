@@ -50,20 +50,30 @@ impl WebSocketServer {
     }
 
     pub async fn broadcast(&self, message: Message) {
-        let mut writer_map = self.writer_map.lock().await;
-        if writer_map.is_empty() {
-            return;
+        {
+            let writer_map = self.writer_map.lock().await;
+            if writer_map.is_empty() {
+                return;
+            }
         }
 
-        if writer_map.len() == 1 {
-            let (_, writer) = writer_map.iter().next().unwrap();
-            let _ = writer.send(message).await;
-            return;
+        {
+            let writer_map = self.writer_map.lock().await;
+            if writer_map.len() == 1 {
+                let (_, writer) = writer_map.iter().next().unwrap();
+                let _ = writer.send(message).await;
+                return;
+            }
         }
 
         let mut send_futures = Vec::new();
-        for (_, writer) in writer_map.iter_mut() {
-            send_futures.push(writer.send(message.clone()));
+        {
+            let mut writer_map = self.writer_map.lock().await;
+            for (_, writer) in writer_map.iter_mut() {
+                let writer = writer.clone();
+                let message = message.clone();
+                send_futures.push(async move { writer.send(message).await });
+            }
         }
 
         futures::future::join_all(send_futures).await;
