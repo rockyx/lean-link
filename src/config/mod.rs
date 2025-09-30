@@ -123,6 +123,20 @@ mod string_to_qos {
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct Sys {
+    #[serde(default)]
+    pub sync_time_from_client: bool,
+}
+
+impl Default for Sys {
+    fn default() -> Self {
+        Sys {
+            sync_time_from_client: false,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct ServerConfig {
     pub database: DatabaseConfig,
     #[cfg(feature = "web")]
@@ -139,6 +153,8 @@ pub struct ServerConfig {
     pub serialport: Vec<SerialPortConfig>,
     #[cfg(feature = "mqtt")]
     pub mqtt: Vec<MqttConfig>,
+    #[serde(default)]
+    pub sys: Sys,
 }
 
 /// Get the cross-platform configuration file path

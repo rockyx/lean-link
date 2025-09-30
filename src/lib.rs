@@ -32,7 +32,7 @@ impl AppState {
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
 
         #[cfg(feature = "web")]
-        let web_socket_server = WebSocketServer::new();
+        let web_socket_server = WebSocketServer::new(server_config.web_socket.clone(), server_config.sys.clone());
 
         Ok(Self {
             db_conn,
@@ -46,10 +46,7 @@ impl AppState {
     #[cfg(feature = "web")]
     pub async fn start_web_socket(&self) -> std::io::Result<Receiver<WebSocketMessage>> {
         self.ws_server
-            .start(
-                &self.server_config.web_socket.host,
-                &self.server_config.web_socket.port,
-            )
+            .start()
             .await
     }
 }

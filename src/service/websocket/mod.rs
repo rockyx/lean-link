@@ -1,7 +1,9 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, process::Command, sync::Arc};
 
+use crate::config::{Sys, WebSocketConfig};
 use bytes::Bytes;
-use futures::{SinkExt, StreamExt};
+use futures::{SinkExt, StreamExt, stream::SplitSink};
+use serde::{Deserialize, Serialize};
 use tokio::{
     net::{TcpListener, TcpStream},
     select,
@@ -10,7 +12,25 @@ use tokio::{
         mpsc::{self, Receiver, Sender},
     },
 };
-use tokio_tungstenite::{accept_async, tungstenite::Message};
+use tokio_tungstenite::{WebSocketStream, accept_async, tungstenite::Message};
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct WsMessage<T> {
+    pub topic: String,
+    pub payload: T,
+}
+
+impl<T> Into<Message> for WsMessage<T>
+where
+    T: Serialize,
+{
+    fn into(self) -> Message {
+        let json_data = serde_json::to_value(&self).unwrap();
+        tracing::debug!("send message: {}", json_data);
+
+        Message::Text(json_data.to_string().into())
+    }
+}
 
 #[derive(Debug)]
 pub enum WebSocketMessage {
@@ -21,29 +41,41 @@ pub enum WebSocketMessage {
 #[derive(Clone)]
 pub struct WebSocketServer {
     writer_map: Arc<Mutex<HashMap<String, Sender<Message>>>>,
+    websocket_config: WebSocketConfig,
+    sys_config: Sys,
 }
 
 impl WebSocketServer {
-    pub fn new() -> Self {
+    pub fn new(websocket_config: WebSocketConfig, sys_config: Sys) -> Self {
         WebSocketServer {
             writer_map: Arc::new(Mutex::new(HashMap::new())),
+            websocket_config,
+            sys_config,
         }
     }
 
-    pub async fn start(
-        &self,
-        addr: &str,
-        port: &u16,
-    ) -> std::io::Result<Receiver<WebSocketMessage>> {
+    pub async fn start(&self) -> std::io::Result<Receiver<WebSocketMessage>> {
         let (read_sender, read_recver) = mpsc::channel::<WebSocketMessage>(1024);
-        let addr = format!("{}:{}", addr, port);
+        let addr = format!(
+            "{}:{}",
+            self.websocket_config.host, self.websocket_config.port
+        );
         let listener = TcpListener::bind(&addr).await?;
 
         tracing::info!("WebSocket server listening on {}", addr);
 
         let writer_map = self.writer_map.clone();
+        let websocket_config = self.websocket_config.clone();
+        let sys_config = self.sys_config.clone();
         tokio::spawn(async move {
-            start_listening(listener, writer_map, read_sender).await;
+            start_listening(
+                listener,
+                writer_map,
+                read_sender,
+                websocket_config,
+                sys_config,
+            )
+            .await;
         });
 
         Ok(read_recver)
@@ -91,10 +123,101 @@ async fn start_listening(
     listener: TcpListener,
     writer_map: Arc<Mutex<HashMap<String, Sender<Message>>>>,
     read_sender: Sender<WebSocketMessage>,
+    websocket_config: WebSocketConfig,
+    sys_config: Sys,
 ) {
     while let Ok((stream, _)) = listener.accept().await {
         let writer_map = writer_map.clone();
-        tokio::spawn(handle_connection(stream, writer_map, read_sender.clone()));
+        tokio::spawn(handle_connection(
+            stream,
+            writer_map,
+            read_sender.clone(),
+            websocket_config.clone(),
+            sys_config.clone(),
+        ));
+    }
+}
+
+async fn handle_websocket_message(
+    message: &Result<Message, tokio_tungstenite::tungstenite::Error>,
+    writer_map: &Arc<Mutex<HashMap<String, Sender<Message>>>>,
+    writer: &mut SplitSink<WebSocketStream<TcpStream>, Message>,
+    read_sender: &Sender<WebSocketMessage>,
+    peer_addr: &str,
+    sys_config: &Sys,
+) -> bool {
+    match message {
+        Ok(data) => match data {
+            Message::Ping(_) => {
+                let _ = writer.send(Message::Pong(Bytes::new())).await;
+                return true;
+            }
+            Message::Text(msg) => {
+                let value = serde_json::from_str::<serde_json::Value>(&msg);
+                if value.is_err() {
+                    tracing::error!("Invalid JSON message: {}", msg);
+                    return true;
+                }
+
+                let value = value.unwrap();
+
+                if let Some(topic) = value.get("topic").and_then(|v| v.as_str()) {
+                    if topic == "syncSysTime" && sys_config.sync_time_from_client {
+                        if let Some(payload) = value.get("payload") {
+                            match payload {
+                                serde_json::Value::String(s) => {
+                                    tracing::info!("syncSysTime payload (string): {}", s);
+                                    let output = Command::new("sudo")
+                                        .arg("timedatectl")
+                                        .arg("set-time")
+                                        .arg(s)
+                                        .output();
+                                    tracing::info!("syncSysTime command output: {:?}", output);
+                                    return true;
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+                let _ = read_sender
+                    .send(WebSocketMessage::Message(peer_addr.into(), data.clone()))
+                    .await;
+                return true;
+            }
+            _ => {
+                let _ = read_sender
+                    .send(WebSocketMessage::Message(peer_addr.into(), data.clone()))
+                    .await;
+                return true;
+            }
+        },
+        Err(e) => {
+            tracing::error!("WebSocket Error: {}", e);
+            let mut writer_map = writer_map.lock().await;
+            writer_map.remove(peer_addr);
+            return false;
+        }
+    }
+}
+
+async fn handle_message(
+    message: &Option<Result<Message, tokio_tungstenite::tungstenite::Error>>,
+    writer_map: &Arc<Mutex<HashMap<String, Sender<Message>>>>,
+    writer: &mut SplitSink<WebSocketStream<TcpStream>, Message>,
+    read_sender: &Sender<WebSocketMessage>,
+    peer_addr: &str,
+    sys_config: &Sys,
+) -> bool {
+    match message {
+        Some(msg) => {
+            handle_websocket_message(&msg, writer_map, writer, read_sender, peer_addr, sys_config).await
+        }
+        None => {
+            let mut writer_map = writer_map.lock().await;
+            writer_map.remove(peer_addr);
+            return false;
+        }
     }
 }
 
@@ -102,6 +225,8 @@ async fn handle_connection(
     raw_stream: TcpStream,
     writer_map: Arc<Mutex<HashMap<String, Sender<Message>>>>,
     read_sender: Sender<WebSocketMessage>,
+    websocket_config: WebSocketConfig,
+    sys_config: Sys,
 ) {
     let ws_stream = accept_async(raw_stream).await;
     if ws_stream.is_err() {
@@ -135,32 +260,8 @@ async fn handle_connection(
     loop {
         select! {
             message = reader.next() => {
-                match message {
-                    Some(msg) => {
-                        match msg {
-                            Ok(data) => {
-                                match data {
-                                    Message::Ping(_) => {
-                                        let _ = writer.send(Message::Pong(Bytes::new())).await;
-                                    },
-                                    _ => {
-                                        let _ = read_sender.send(WebSocketMessage::Message(peer_addr.clone(), data)).await;
-                                    }
-                                }
-                            },
-                            Err(e) => {
-                                tracing::error!("WebSocket Error: {}", e);
-                                let mut writer_map = writer_map.lock().await;
-                                writer_map.remove(&peer_addr);
-                                break;
-                            }
-                        }
-                    },
-                    None => {
-                        let mut writer_map = writer_map.lock().await;
-                        writer_map.remove(&peer_addr);
-                        break;
-                    },
+                if !handle_message(&message, &writer_map, &mut writer, &read_sender, &peer_addr, &sys_config).await {
+                    break;
                 }
             },
 
@@ -169,12 +270,11 @@ async fn handle_connection(
                     Some(msg) => {
                         let _ = writer.send(msg).await;
                     },
-                    None => {
-                        break;
-                    },
+                    None => {},
                 }
             },
-            _ = tokio::time::sleep(std::time::Duration::from_secs(30)) => {
+
+            _ = tokio::time::sleep(websocket_config.heartbeat_interval) => {
                 let _ = writer.send(Message::Ping(bytes::Bytes::new())).await;
             }
         }
