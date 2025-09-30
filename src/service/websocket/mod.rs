@@ -167,6 +167,15 @@ async fn handle_websocket_message(
                             match payload {
                                 serde_json::Value::String(s) => {
                                     tracing::info!("syncSysTime payload (string): {}", s);
+
+                                    let disable_ntp_output = Command::new("sudo")
+                                        .arg("timedatectl")
+                                        .arg("set-ntp")
+                                        .arg("false")
+                                        .output();
+
+                                    tracing::info!("disable_ntp_output command output: {:?}", disable_ntp_output);
+                                    
                                     let output = Command::new("sudo")
                                         .arg("timedatectl")
                                         .arg("set-time")
@@ -211,7 +220,8 @@ async fn handle_message(
 ) -> bool {
     match message {
         Some(msg) => {
-            handle_websocket_message(&msg, writer_map, writer, read_sender, peer_addr, sys_config).await
+            handle_websocket_message(&msg, writer_map, writer, read_sender, peer_addr, sys_config)
+                .await
         }
         None => {
             let mut writer_map = writer_map.lock().await;
