@@ -127,6 +127,7 @@ pub struct Sys {
     #[serde(default)]
     pub sync_time_from_client: bool,
     pub rtc_i2c_dev: String,
+    pub rtc_i2c_addr: u32,
 }
 
 impl Default for Sys {
@@ -134,6 +135,7 @@ impl Default for Sys {
         Sys {
             sync_time_from_client: false,
             rtc_i2c_dev: "/dev/i2c-1".to_string(),
+            rtc_i2c_addr: 0x68
         }
     }
 }
