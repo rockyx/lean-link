@@ -168,20 +168,37 @@ async fn handle_websocket_message(
                                 serde_json::Value::String(s) => {
                                     tracing::info!("syncSysTime payload (string): {}", s);
 
-                                    let disable_ntp_output = Command::new("sudo")
-                                        .arg("timedatectl")
-                                        .arg("set-ntp")
-                                        .arg("false")
-                                        .output();
+                                    #[cfg(target_os = "linux")]
+                                    {
+                                        let disable_ntp_output = Command::new("sudo")
+                                            .arg("timedatectl")
+                                            .arg("set-ntp")
+                                            .arg("false")
+                                            .output();
 
-                                    tracing::info!("disable_ntp_output command output: {:?}", disable_ntp_output);
-                                    
-                                    let output = Command::new("sudo")
-                                        .arg("timedatectl")
-                                        .arg("set-time")
-                                        .arg(s)
-                                        .output();
-                                    tracing::info!("syncSysTime command output: {:?}", output);
+                                        tracing::info!(
+                                            "disable_ntp_output command output: {:?}",
+                                            disable_ntp_output
+                                        );
+
+                                        let output = Command::new("sudo")
+                                            .arg("timedatectl")
+                                            .arg("set-time")
+                                            .arg(s)
+                                            .output();
+                                        tracing::info!("syncSysTime command output: {:?}", output);
+
+                                        let rtc_i2c_dev = sys_config.rtc_i2c_dev.clone();
+                                        // sync system time to RTC
+                                        // sudo hwclock -w -f /dev/i2c-1
+                                        let output = Command::new("sudo")
+                                            .arg("hwclock")
+                                            .arg("-w")
+                                            .arg("-f")
+                                            .arg(rtc_i2c_dev)
+                                            .output();
+                                        tracing::info!("syncSysTime command output: {:?}", output);
+                                    }
                                     return true;
                                 }
                                 _ => {}

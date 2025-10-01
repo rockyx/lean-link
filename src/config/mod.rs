@@ -126,12 +126,14 @@ mod string_to_qos {
 pub struct Sys {
     #[serde(default)]
     pub sync_time_from_client: bool,
+    pub rtc_i2c_dev: String,
 }
 
 impl Default for Sys {
     fn default() -> Self {
         Sys {
             sync_time_from_client: false,
+            rtc_i2c_dev: "/dev/i2c-1".to_string(),
         }
     }
 }
