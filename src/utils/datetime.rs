@@ -288,6 +288,17 @@ pub fn set_local_time_from_ds1307(bus: u16, addr: u16) -> Result<(), String> {
         return Err(format!("invalid second from RTC: {}", sec));
     }
 
+    let disable_ntp_output = Command::new("sudo")
+        .arg("timedatectl")
+        .arg("set-ntp")
+        .arg("false")
+        .output();
+
+    tracing::info!(
+        "disable_ntp_output command output: {:?}",
+        disable_ntp_output
+    );
+
     // Format as "YYYY-MM-DD HH:MM:SS"
     let ts = format!(
         "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
