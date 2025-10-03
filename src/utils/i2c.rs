@@ -8,7 +8,8 @@ pub fn path_to_i2c_bus(path: &str) -> Result<u16, String> {
 
 // Helper to read one register via i2cget
 pub fn i2c_read_reg(bus: u16, addr: u16, reg: u8) -> Result<u8, String> {
-    let output = Command::new("i2cget")
+    let output = Command::new("sudo")
+        .arg("i2cget")
         .arg("-y")
         .arg(bus.to_string())
         .arg(format!("0x{:02x}", addr))
