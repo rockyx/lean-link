@@ -193,7 +193,7 @@ async fn handle_websocket_message(
                                             let rtc_i2c_addr = sys_config.rtc_i2c_addr;
 
                                             let bus_result =
-                                                crate::utils::i2c::path_to_i2c_bus(rtc_i2c_dev);
+                                                crate::utils::i2c::path_to_i2c_bus(&rtc_i2c_dev);
 
                                             if bus_result.is_err() {
                                                 tracing::info!(
