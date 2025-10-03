@@ -203,7 +203,7 @@ async fn handle_websocket_message(
                                             } else {
                                                 let bus = bus_result.unwrap();
                                                 let output =
-                                                crate::utils::datetime::set_local_time_from_ds1307(
+                                                crate::utils::datetime::set_ds1307_from_local_time(
                                                     bus,
                                                     rtc_i2c_addr,
                                                 );
