@@ -201,7 +201,8 @@ pub fn set_ds1307_from_local_time(bus: u16, addr: u16) -> Result<(), String> {
 
     // Build i2cset command: write starting at register 0x00 with 7 bytes
     // i2cset -y <bus> <addr> 0x00 sec min hour dow dom mon year i
-    let status = Command::new("i2cset")
+    let status = Command::new("sudo")
+        .arg("i2cset")
         .arg("-y")
         .arg(bus.to_string())
         .arg(format!("0x{:02x}", addr))
