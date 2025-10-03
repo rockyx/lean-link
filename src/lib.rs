@@ -1,5 +1,3 @@
-use std::process::Command;
-
 use crate::{
     config::ServerConfig,
     service::websocket::{WebSocketMessage, WebSocketServer},
@@ -39,18 +37,22 @@ impl AppState {
 
         #[cfg(target_os = "linux")]
         {
-            let sync_time_from_client = server_config.sys.sync_time_from_client;
+            use crate::utils::i2c::path_to_i2c_bus;
+            use crate::utils::datetime::set_local_time_from_ds1307;
+
+            let sync_time_from_rtc = server_config.sys.sync_time_from_rtc;
             let rtc_i2c_dev = server_config.sys.rtc_i2c_dev.clone();
-            if sync_time_from_client {
+            let rtc_i2c_addr = server_config.sys.rtc_i2c_addr;
+            if sync_time_from_rtc {
                 // sync system time from RTC
-                // sudo hwclock -s -f /dev/i2c-1
-                let output = Command::new("sudo")
-                    .arg("hwclock")
-                    .arg("-s")
-                    .arg("-f")
-                    .arg(rtc_i2c_dev)
-                    .output();
-                tracing::info!("syncSysTime command output: {:?}", output);
+                let bus_result = path_to_i2c_bus(&rtc_i2c_dev);
+                if bus_result.is_err() {
+                    tracing::info!("syncSysTime command output: {:?}", bus_result);
+                } else {
+                    let bus = bus_result.unwrap();
+                    let output = set_local_time_from_ds1307(bus, rtc_i2c_addr);
+                    tracing::info!("syncSysTime command output: {:?}", output);
+                }
             }
         }
 

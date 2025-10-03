@@ -188,16 +188,31 @@ async fn handle_websocket_message(
                                             .output();
                                         tracing::info!("syncSysTime command output: {:?}", output);
 
-                                        let rtc_i2c_dev = sys_config.rtc_i2c_dev.clone();
-                                        // sync system time to RTC
-                                        // sudo hwclock -w -f /dev/i2c-1
-                                        let output = Command::new("sudo")
-                                            .arg("hwclock")
-                                            .arg("-w")
-                                            .arg("-f")
-                                            .arg(rtc_i2c_dev)
-                                            .output();
-                                        tracing::info!("syncSysTime command output: {:?}", output);
+                                        if sys_config.sync_time_from_rtc {
+                                            let rtc_i2c_dev = sys_config.rtc_i2c_dev.clone();
+                                            let rtc_i2c_addr = sys_config.rtc_i2c_addr;
+
+                                            let bus_result =
+                                                crate::utils::i2c::path_to_i2c_bus(rtc_i2c_dev);
+
+                                            if bus_result.is_err() {
+                                                tracing::info!(
+                                                    "syncSysTime command output: {:?}",
+                                                    bus_result
+                                                );
+                                            } else {
+                                                let bus = bus_result.unwrap();
+                                                let output =
+                                                crate::utils::datetime::set_local_time_from_ds1307(
+                                                    bus,
+                                                    rtc_i2c_addr,
+                                                );
+                                                tracing::info!(
+                                                    "syncSysTime command output: {:?}",
+                                                    output
+                                                );
+                                            }
+                                        }
                                     }
                                     return true;
                                 }
