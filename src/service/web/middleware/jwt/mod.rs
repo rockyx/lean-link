@@ -1,6 +1,6 @@
 pub use builder::Jwt;
 use chrono::{Duration, Utc};
-pub use jsonwebtoken::*;
+use jsonwebtoken::*;
 pub use middleware::JwtMiddleware;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;

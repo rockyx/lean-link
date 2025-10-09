@@ -1,7 +1,5 @@
 use std::path::{Path, PathBuf};
 
-pub use tsink::*;
-
 fn get_td_path() -> Option<PathBuf> {
     // Differentiate operating systems
     if cfg!(target_os = "linux") {

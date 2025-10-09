@@ -5,9 +5,79 @@ use crate::{
 use sea_orm::{Database, DatabaseConnection};
 use tokio::sync::mpsc::Receiver;
 
+// Base re-export
+pub use bcrypt as bcrypt;
+pub use bytes as bytes;
+pub use chrono as chrono;
+pub use serde_json as serde_json;
+pub use smallvec as smallvec;
+pub use thiserror as thiserror;
+pub use directories as directories;
+pub use serde_yaml as serde_yaml;
+pub use normpath as normpath;
+pub use anyhow as anyhow;
+pub use rand as rand;
+pub use regex as regex;
+pub use tsink as tsink;
+pub use crc as crc;
+pub use rust_decimal as rust_decimal;
+pub use rust_decimal_macros as rust_decimal_macros;
+pub use dashmap as dashmap;
+
+// Tracing re-export
+pub use tracing as tracing;
+pub use tracing_subscriber as tracing_subscriber;
+
+// Tokio re-export
+pub use tokio as tokio;
+pub use async_trait as async_trait;
+pub use futures as futures;
+pub use futures_util as futures_util;
+pub use tokio_retry2 as tokio_retry2;
+pub use tokio_stream as tokio_stream;
+pub use tokio_cron_scheduler as tokio_cron_scheduler;
+
+// Database re-export
+pub use sea_orm as sea_orm;
+pub use sea_orm_migration as sea_orm_migration;
+
+// UUID re-export
+pub use uuid as uuid;
+
+// Atix re-export
+#[cfg(feature = "web")]
+pub use tracing_actix_web as tracing_actix_web;
+#[cfg(feature = "web")]
+pub use actix_cors as actix_cors;
+#[cfg(feature = "web")]
+pub use actix_utils as actix_utils;
+#[cfg(feature = "web")]
+pub use jsonwebtoken as jsonwebtoken;
+#[cfg(any(feature = "web", feature = "socket"))]
+pub use tokio_tungstenite as tokio_tungstenite;
+
+
+
+// Mqtt re-export
+#[cfg(feature = "mqtt")]
+pub use rumqttc as rumqttc;
+
+// SerialPort re-export
+#[cfg(feature = "serialport")]
+pub use serialport as serialport;
+#[cfg(feature = "serialport")]
+pub use tokio_serial as tokio_serial;
+
+// Modbus re-export
+#[cfg(feature = "modbus")]
+pub use tokio_modbus as tokio_modbus;
+
+// Platform re-export
+#[cfg(target_os = "windows")]
+pub use winapi as winapi;
+
+
 pub mod config;
-pub mod crc;
-pub mod cron;
 pub mod database;
 pub mod errors;
 pub mod service;
