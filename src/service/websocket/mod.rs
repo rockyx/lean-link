@@ -1,4 +1,4 @@
-use std::{collections::HashMap, process::Command, sync::Arc};
+use std::{collections::HashMap, sync::Arc};
 
 use crate::config::{Sys, WebSocketConfig};
 use bytes::Bytes;
@@ -170,6 +170,7 @@ async fn handle_websocket_message(
 
                                     #[cfg(target_os = "linux")]
                                     {
+                                        use std::process::Command;
                                         let disable_ntp_output = Command::new("sudo")
                                             .arg("timedatectl")
                                             .arg("set-ntp")
