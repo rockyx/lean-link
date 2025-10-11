@@ -8,3 +8,5 @@ pub mod serialport;
 pub mod web;
 #[cfg(feature = "web")]
 pub mod websocket;
+#[cfg(any(feature = "imv-camera"))]
+pub mod camera;

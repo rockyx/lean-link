@@ -11,6 +11,7 @@ license = "MIT OR Apache-2.0"
 categories = []
 keywords = []
 rust-version = "1.89"
+build = "build.rs"
 
 [lib]
 name = "lean_link"
@@ -63,6 +64,9 @@ dashmap = { version = "6.1.0", features = ["serde"] }
 
 [dev-dependencies]
 
+[build-dependencies]
+bindgen = "0.72.1"
+
 [features]
 default = ["web", "sqlite"]
 sqlite = ["sea-orm/sqlx-sqlite", "sea-orm-migration/sqlx-sqlite"]
@@ -73,4 +77,6 @@ serialport = ["tokio-serial", "dep:serialport"]
 mqtt = ["rumqttc"]
 modbus = ["tokio-modbus", "serialport"]
 socket = ["tokio-tungstenite"]
-all = ["sqlite", "mysql", "postgres", "web", "serialport", "mqtt", "modbus", "socket"]
+imv-camera = []
+all = ["sqlite", "mysql", "postgres", "web", "serialport", "mqtt", "modbus", "socket", "imv-camera"]
+

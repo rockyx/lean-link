@@ -32,6 +32,13 @@ pub enum Error {
     Tsink(#[from] tsink::TsinkError),
     #[error("Configure Error")]
     Configure,
+    #[cfg(any(feature = "imv-camera"))]
+    #[error("Camera Error Code: {0}")]
+    Camera(i32),
+    #[error("Null Error: {0}")]
+    NullError(#[from] std::ffi::NulError),
+    #[error("Into String Error: {0}")]
+    IntoStringError(#[from] std::ffi::IntoStringError),
 }
 
 #[cfg(feature = "web")]

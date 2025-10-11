@@ -56,8 +56,6 @@ pub use jsonwebtoken as jsonwebtoken;
 #[cfg(any(feature = "web", feature = "socket"))]
 pub use tokio_tungstenite as tokio_tungstenite;
 
-
-
 // Mqtt re-export
 #[cfg(feature = "mqtt")]
 pub use rumqttc as rumqttc;
@@ -83,7 +81,7 @@ pub mod errors;
 pub mod service;
 pub mod storage;
 pub mod utils;
-
+pub mod ffi;
 // pub use lean_link_macros::*;
 
 pub struct AppState {
