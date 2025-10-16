@@ -24,7 +24,7 @@ pub async fn find_user_by_id(
         .filter(
             t_users::Column::Id
                 .eq(user_id)
-                .and(t_users::Column::DeletedAt::is_null()),
+                .and(t_users::Column::DeletedAt.is_null()),
         )
         .one(conn)
         .await
