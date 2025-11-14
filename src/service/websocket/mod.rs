@@ -1,16 +1,14 @@
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 
 use crate::config::{Sys, WebSocketConfig};
 use bytes::Bytes;
+use dashmap::DashMap;
 use futures::{SinkExt, StreamExt, stream::SplitSink};
 use serde::{Deserialize, Serialize};
 use tokio::{
     net::{TcpListener, TcpStream},
     select,
-    sync::{
-        Mutex,
-        mpsc::{self, Receiver, Sender},
-    },
+    sync::{broadcast, mpsc},
 };
 use tokio_tungstenite::{WebSocketStream, accept_async, tungstenite::Message};
 
@@ -40,21 +38,23 @@ pub enum WebSocketMessage {
 
 #[derive(Clone)]
 pub struct WebSocketServer {
-    writer_map: Arc<Mutex<HashMap<String, Sender<Message>>>>,
+    writer_map: Arc<DashMap<String, mpsc::Sender<Message>>>,
     websocket_config: WebSocketConfig,
     sys_config: Sys,
+    broadcast_sender: broadcast::Sender<Message>,
 }
 
 impl WebSocketServer {
     pub fn new(websocket_config: WebSocketConfig, sys_config: Sys) -> Self {
         WebSocketServer {
-            writer_map: Arc::new(Mutex::new(HashMap::new())),
+            writer_map: Arc::new(DashMap::new()),
             websocket_config,
             sys_config,
+            broadcast_sender: broadcast::channel(16).0,
         }
     }
 
-    pub async fn start(&self) -> std::io::Result<Receiver<WebSocketMessage>> {
+    pub async fn start(&self) -> std::io::Result<mpsc::Receiver<WebSocketMessage>> {
         let (read_sender, read_recver) = mpsc::channel::<WebSocketMessage>(1024);
         let addr = format!(
             "{}:{}",
@@ -67,6 +67,7 @@ impl WebSocketServer {
         let writer_map = self.writer_map.clone();
         let websocket_config = self.websocket_config.clone();
         let sys_config = self.sys_config.clone();
+        let broadcast_sender = self.broadcast_sender.clone();
         tokio::spawn(async move {
             start_listening(
                 listener,
@@ -74,6 +75,7 @@ impl WebSocketServer {
                 read_sender,
                 websocket_config,
                 sys_config,
+                broadcast_sender,
             )
             .await;
         });
@@ -82,38 +84,11 @@ impl WebSocketServer {
     }
 
     pub async fn broadcast(&self, message: Message) {
-        {
-            let writer_map = self.writer_map.lock().await;
-            if writer_map.is_empty() {
-                return;
-            }
-        }
-
-        {
-            let writer_map = self.writer_map.lock().await;
-            if writer_map.len() == 1 {
-                let (_, writer) = writer_map.iter().next().unwrap();
-                let _ = writer.send(message).await;
-                return;
-            }
-        }
-
-        let mut send_futures = Vec::new();
-        {
-            let mut writer_map = self.writer_map.lock().await;
-            for (_, writer) in writer_map.iter_mut() {
-                let writer = writer.clone();
-                let message = message.clone();
-                send_futures.push(async move { writer.send(message).await });
-            }
-        }
-
-        futures::future::join_all(send_futures).await;
+        let _ = self.broadcast_sender.send(message);
     }
 
     pub async fn send(&self, id: &str, message: Message) {
-        let mut writer_map = self.writer_map.lock().await;
-        if let Some(writer) = writer_map.get_mut(id) {
+        if let Some(writer) = self.writer_map.get_mut(id) {
             let _ = writer.send(message).await;
         }
     }
@@ -121,10 +96,11 @@ impl WebSocketServer {
 
 async fn start_listening(
     listener: TcpListener,
-    writer_map: Arc<Mutex<HashMap<String, Sender<Message>>>>,
-    read_sender: Sender<WebSocketMessage>,
+    writer_map: Arc<DashMap<String, mpsc::Sender<Message>>>,
+    read_sender: mpsc::Sender<WebSocketMessage>,
     websocket_config: WebSocketConfig,
     sys_config: Sys,
+    broadcast_sender: broadcast::Sender<Message>,
 ) {
     while let Ok((stream, _)) = listener.accept().await {
         let writer_map = writer_map.clone();
@@ -134,15 +110,16 @@ async fn start_listening(
             read_sender.clone(),
             websocket_config.clone(),
             sys_config.clone(),
+            broadcast_sender.clone(),
         ));
     }
 }
 
 async fn handle_websocket_message(
     message: &Result<Message, tokio_tungstenite::tungstenite::Error>,
-    writer_map: &Arc<Mutex<HashMap<String, Sender<Message>>>>,
+    writer_map: &Arc<DashMap<String, mpsc::Sender<Message>>>,
     writer: &mut SplitSink<WebSocketStream<TcpStream>, Message>,
-    read_sender: &Sender<WebSocketMessage>,
+    read_sender: &mpsc::Sender<WebSocketMessage>,
     peer_addr: &str,
     sys_config: &Sys,
 ) -> bool {
@@ -236,7 +213,6 @@ async fn handle_websocket_message(
         },
         Err(e) => {
             tracing::error!("WebSocket Error: {}", e);
-            let mut writer_map = writer_map.lock().await;
             writer_map.remove(peer_addr);
             return false;
         }
@@ -245,9 +221,9 @@ async fn handle_websocket_message(
 
 async fn handle_message(
     message: &Option<Result<Message, tokio_tungstenite::tungstenite::Error>>,
-    writer_map: &Arc<Mutex<HashMap<String, Sender<Message>>>>,
+    writer_map: &Arc<DashMap<String, mpsc::Sender<Message>>>,
     writer: &mut SplitSink<WebSocketStream<TcpStream>, Message>,
-    read_sender: &Sender<WebSocketMessage>,
+    read_sender: &mpsc::Sender<WebSocketMessage>,
     peer_addr: &str,
     sys_config: &Sys,
 ) -> bool {
@@ -257,7 +233,6 @@ async fn handle_message(
                 .await
         }
         None => {
-            let mut writer_map = writer_map.lock().await;
             writer_map.remove(peer_addr);
             return false;
         }
@@ -266,10 +241,11 @@ async fn handle_message(
 
 async fn handle_connection(
     raw_stream: TcpStream,
-    writer_map: Arc<Mutex<HashMap<String, Sender<Message>>>>,
-    read_sender: Sender<WebSocketMessage>,
+    writer_map: Arc<DashMap<String, mpsc::Sender<Message>>>,
+    read_sender: mpsc::Sender<WebSocketMessage>,
     websocket_config: WebSocketConfig,
     sys_config: Sys,
+    broadcast_sender: broadcast::Sender<Message>,
 ) {
     let ws_stream = accept_async(raw_stream).await;
     if ws_stream.is_err() {
@@ -291,7 +267,6 @@ async fn handle_connection(
 
     let (writer_send, mut writer_recv) = mpsc::channel::<Message>(100);
     {
-        let mut writer_map = writer_map.lock().await;
         writer_map.insert(peer_addr.clone(), writer_send);
     }
 
@@ -300,6 +275,8 @@ async fn handle_connection(
     let _ = read_sender
         .send(WebSocketMessage::NewConnected(peer_addr.clone()))
         .await;
+
+    let mut broadcast_receiver = broadcast_sender.subscribe();
     loop {
         select! {
             message = reader.next() => {
@@ -316,6 +293,17 @@ async fn handle_connection(
                     None => {},
                 }
             },
+
+            broadcast_msg = broadcast_receiver.recv() => {
+                match broadcast_msg {
+                    Ok(msg) => {
+                        let _ = writer.send(msg).await;
+                    }
+                    Err(e) => {
+                        tracing::error!("Error receiving broadcast message: {}", e);
+                    }
+                }
+            }
 
             _ = tokio::time::sleep(websocket_config.heartbeat_interval) => {
                 let _ = writer.send(Message::Ping(bytes::Bytes::new())).await;
