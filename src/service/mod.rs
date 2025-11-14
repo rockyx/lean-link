@@ -10,3 +10,5 @@ pub mod web;
 pub mod websocket;
 #[cfg(any(feature = "imv-camera"))]
 pub mod camera;
+#[cfg(feature = "socket")]
+pub mod socket;

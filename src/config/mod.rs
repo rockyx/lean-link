@@ -122,6 +122,16 @@ mod string_to_qos {
     }
 }
 
+#[cfg(feature = "socket")]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+pub struct SocketConfig {
+    pub host: String,
+    pub port: u16,
+    pub max_connections: u32,
+    #[serde(with = "crate::utils::datetime::string_to_duration")]
+    pub heartbeat_interval: Duration,
+}
+
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Sys {
     #[serde(default)]
@@ -164,6 +174,8 @@ pub struct ServerConfig {
     pub mqtt: Vec<MqttConfig>,
     #[serde(default)]
     pub sys: Sys,
+    #[cfg(feature = "socket")]
+    pub socket: Vec<SocketConfig>,
 }
 
 /// Get the cross-platform configuration file path
