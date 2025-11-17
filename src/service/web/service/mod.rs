@@ -1,5 +1,8 @@
 use actix_web::web;
 use serde::{Deserialize, Serialize};
+use tracing::Instrument;
+
+use crate::database::entity::PageResult;
 
 pub mod user;
 
@@ -90,4 +93,16 @@ pub struct Pagination<D> {
     pub current: u64,
     pub size: u64,
     pub pages: u64,
+}
+
+impl<T> From<PageResult<T>> for Pagination<T> {
+    fn from(value: PageResult<T>) -> Self {
+        Self {
+            records: value.records,
+            total: value.total_count,
+            current: value.page_index,
+            size: value.page_size,
+            pages: value.pages,
+        }
+    }
 }
