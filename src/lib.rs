@@ -3,7 +3,6 @@ use crate::{
     service::websocket::{WebSocketMessage, WebSocketServer},
 };
 use sea_orm::{Database, DatabaseConnection};
-use serde::Serialize;
 use tokio::sync::mpsc::Receiver;
 
 // Base re-export

@@ -1,7 +1,5 @@
 use actix_web::web;
 use serde::{Deserialize, Serialize};
-use tracing::Instrument;
-
 use crate::database::entity::PageResult;
 
 pub mod user;
