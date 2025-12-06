@@ -339,11 +339,7 @@ impl ModbusService {
     }
 
     /// Write a single holding register (0x06)
-    pub async fn write_single_register(
-        &mut self,
-        addr: u16,
-        word: u16,
-    ) -> Result<()> {
+    pub async fn write_single_register(&mut self, addr: u16, word: u16) -> Result<()> {
         let _ = self.inner.connect().await?;
         let will_timeout = self.inner.will_timeout();
         let timeout = self.inner.timeout();
@@ -380,11 +376,7 @@ impl ModbusService {
     }
 
     /// Write multiple coils (0x0F)
-    pub async fn write_multiple_coils(
-        &mut self,
-        addr: u16,
-        coils: &[bool],
-    ) -> Result<()> {
+    pub async fn write_multiple_coils(&mut self, addr: u16, coils: &[bool]) -> Result<()> {
         let _ = self.inner.connect().await?;
         let will_timeout = self.inner.will_timeout();
         let timeout = self.inner.timeout();
@@ -420,11 +412,7 @@ impl ModbusService {
     }
 
     /// Write multiple holding registers (0x10)
-    pub async fn write_multiple_registers(
-        &mut self,
-        addr: u16,
-        words: &[u16],
-    ) -> Result<()> {
+    pub async fn write_multiple_registers(&mut self, addr: u16, words: &[u16]) -> Result<()> {
         let _ = self.inner.connect().await?;
         let will_timeout = self.inner.will_timeout();
         let timeout = self.inner.timeout();
@@ -585,170 +573,173 @@ pub fn registers_to_u32(
     }
 }
 
-#[tokio::test]
-async fn test_modbus() {
-    tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::DEBUG)
-        .init();
+#[cfg(test)]
+mod tests {
+    #[tokio::test]
+    async fn test_modbus() {
+        tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::DEBUG)
+            .init();
 
-    let builder = ModbusRTUBuilder::new("/dev/tty.usbserial-0001", 9600)
-        .with_slave(1)
-        .with_timeout(std::time::Duration::from_secs(1));
-    let mut service = builder.build();
+        let builder = ModbusRTUBuilder::new("/dev/tty.usbserial-0001", 9600)
+            .with_slave(1)
+            .with_timeout(std::time::Duration::from_secs(1));
+        let mut service = builder.build();
 
-    loop {
-        {
-            let result = service.read_coils(0x0001, 1).await;
-            tracing::debug!("{:?}", result);
+        loop {
+            {
+                let result = service.read_coils(0x0001, 1).await;
+                tracing::debug!("{:?}", result);
+            }
+
+            {
+                let result = service.read_discrete_inputs(0x0001, 1).await;
+                tracing::debug!("{:?}", result);
+            }
+
+            {
+                let result = service.read_holding_registers(0x0001, 1).await;
+                tracing::debug!("{:?}", result);
+            }
+
+            {
+                let result = service.read_input_registers(0x0001, 1).await;
+                tracing::debug!("{:?}", result);
+            }
+
+            {
+                let result = service
+                    .read_write_multiple_registers(0x0001, 1, 0x0002, &[0x0001, 0x0002])
+                    .await;
+                tracing::debug!("{:?}", result);
+            }
+
+            {
+                let result = service.write_single_coil(0x0001, true).await;
+                tracing::debug!("{:?}", result);
+            }
+
+            {
+                let result = service.write_single_register(0x0001, 0x0001).await;
+                tracing::debug!("{:?}", result);
+            }
+
+            {
+                let result = service
+                    .write_multiple_coils(0x0001, &[true, false, true])
+                    .await;
+                tracing::debug!("{:?}", result);
+            }
+
+            {
+                let result = service
+                    .write_multiple_registers(0x0001, &[0x0001, 0x0002])
+                    .await;
+                tracing::debug!("{:?}", result);
+            }
+
+            {
+                let result = service.masked_write_register(0x0001, 0x0002, 0x0001).await;
+                tracing::debug!("{:?}", result);
+            }
+
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
         }
-
-        {
-            let result = service.read_discrete_inputs(0x0001, 1).await;
-            tracing::debug!("{:?}", result);
-        }
-
-        {
-            let result = service.read_holding_registers(0x0001, 1).await;
-            tracing::debug!("{:?}", result);
-        }
-
-        {
-            let result = service.read_input_registers(0x0001, 1).await;
-            tracing::debug!("{:?}", result);
-        }
-
-        {
-            let result = service
-                .read_write_multiple_registers(0x0001, 1, 0x0002, &[0x0001, 0x0002])
-                .await;
-            tracing::debug!("{:?}", result);
-        }
-
-        {
-            let result = service.write_single_coil(0x0001, true).await;
-            tracing::debug!("{:?}", result);
-        }
-
-        {
-            let result = service.write_single_register(0x0001, 0x0001).await;
-            tracing::debug!("{:?}", result);
-        }
-
-        {
-            let result = service
-                .write_multiple_coils(0x0001, &[true, false, true])
-                .await;
-            tracing::debug!("{:?}", result);
-        }
-
-        {
-            let result = service
-                .write_multiple_registers(0x0001, &[0x0001, 0x0002])
-                .await;
-            tracing::debug!("{:?}", result);
-        }
-
-        {
-            let result = service.masked_write_register(0x0001, 0x0002, 0x0001).await;
-            tracing::debug!("{:?}", result);
-        }
-
-        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-    }
-}
-
-#[test]
-fn test_reigsters_to_f32() {
-    // 示例：假设从 Modbus 读取的两个寄存器值
-    let mut reg_high = 0x42F1; // 高16位寄存器
-    let mut reg_low = 0x0000; // 低16位寄存器
-
-    match registers_to_f32(reg_high, reg_low, "high_first", "big_endian") {
-        Ok(value) => {
-            println!("转换后的浮点数为: {:.2}", value); // 期望输出 ~120.5
-            assert_eq!(value, 120.5);
-        }
-        Err(e) => eprintln!("转换错误: {}", e),
     }
 
-    reg_high = 0x0000;
-    reg_low = 0x42F1;
+    #[test]
+    fn test_reigsters_to_f32() {
+        // 示例：假设从 Modbus 读取的两个寄存器值
+        let mut reg_high = 0x42F1; // 高16位寄存器
+        let mut reg_low = 0x0000; // 低16位寄存器
 
-    match registers_to_f32(reg_high, reg_low, "low_first", "big_endian") {
-        Ok(value) => {
-            println!("转换后的浮点数为: {:.2}", value); // 期望输出 ~120.5
-            assert_eq!(value, 120.5);
+        match registers_to_f32(reg_high, reg_low, "high_first", "big_endian") {
+            Ok(value) => {
+                println!("转换后的浮点数为: {:.2}", value); // 期望输出 ~120.5
+                assert_eq!(value, 120.5);
+            }
+            Err(e) => eprintln!("转换错误: {}", e),
         }
-        Err(e) => eprintln!("转换错误: {}", e),
+
+        reg_high = 0x0000;
+        reg_low = 0x42F1;
+
+        match registers_to_f32(reg_high, reg_low, "low_first", "big_endian") {
+            Ok(value) => {
+                println!("转换后的浮点数为: {:.2}", value); // 期望输出 ~120.5
+                assert_eq!(value, 120.5);
+            }
+            Err(e) => eprintln!("转换错误: {}", e),
+        }
+
+        reg_high = 0x0000;
+        reg_low = 0xF142;
+
+        match registers_to_f32(reg_high, reg_low, "high_first", "little_endian") {
+            Ok(value) => {
+                println!("转换后的浮点数为: {:.2}", value); // 期望输出 ~120.5
+                assert_eq!(value, 120.5);
+            }
+            Err(e) => eprintln!("转换错误: {}", e),
+        }
+
+        reg_high = 0xF142;
+        reg_low = 0x0000;
+
+        match registers_to_f32(reg_high, reg_low, "low_first", "little_endian") {
+            Ok(value) => {
+                println!("转换后的浮点数为: {:.2}", value); // 期望输出 ~120.5
+                assert_eq!(value, 120.5);
+            }
+            Err(e) => eprintln!("转换错误: {}", e),
+        }
     }
 
-    reg_high = 0x0000;
-    reg_low = 0xF142;
+    #[test]
+    fn test_reigsters_to_u32() {
+        // 示例：假设从 Modbus 读取的两个寄存器值
+        let mut reg_high = 0x0000; // 高16位寄存器
+        let mut reg_low = 0x2710; // 低16位寄存器
 
-    match registers_to_f32(reg_high, reg_low, "high_first", "little_endian") {
-        Ok(value) => {
-            println!("转换后的浮点数为: {:.2}", value); // 期望输出 ~120.5
-            assert_eq!(value, 120.5);
+        match registers_to_u32(reg_high, reg_low, "high_first", "big_endian") {
+            Ok(value) => {
+                println!("转换后的浮点数为: {:.2}", value); // 期望输出 ~120.5
+                assert_eq!(value, 10000);
+            }
+            Err(e) => eprintln!("转换错误: {}", e),
         }
-        Err(e) => eprintln!("转换错误: {}", e),
-    }
 
-    reg_high = 0xF142;
-    reg_low = 0x0000;
+        reg_high = 0x2710;
+        reg_low = 0x0000;
 
-    match registers_to_f32(reg_high, reg_low, "low_first", "little_endian") {
-        Ok(value) => {
-            println!("转换后的浮点数为: {:.2}", value); // 期望输出 ~120.5
-            assert_eq!(value, 120.5);
+        match registers_to_u32(reg_high, reg_low, "low_first", "big_endian") {
+            Ok(value) => {
+                println!("转换后的浮点数为: {:.2}", value); // 期望输出 ~10000
+                assert_eq!(value, 10000);
+            }
+            Err(e) => eprintln!("转换错误: {}", e),
         }
-        Err(e) => eprintln!("转换错误: {}", e),
-    }
-}
 
-#[test]
-fn test_reigsters_to_u32() {
-    // 示例：假设从 Modbus 读取的两个寄存器值
-    let mut reg_high = 0x0000; // 高16位寄存器
-    let mut reg_low = 0x2710; // 低16位寄存器
+        reg_high = 0x1027;
+        reg_low = 0x0000;
 
-    match registers_to_u32(reg_high, reg_low, "high_first", "big_endian") {
-        Ok(value) => {
-            println!("转换后的浮点数为: {:.2}", value); // 期望输出 ~120.5
-            assert_eq!(value, 10000);
+        match registers_to_u32(reg_high, reg_low, "high_first", "little_endian") {
+            Ok(value) => {
+                println!("转换后的浮点数为: {:.2}", value); // 期望输出 ~10000
+                assert_eq!(value, 10000);
+            }
+            Err(e) => eprintln!("转换错误: {}", e),
         }
-        Err(e) => eprintln!("转换错误: {}", e),
-    }
 
-    reg_high = 0x2710;
-    reg_low = 0x0000;
+        reg_high = 0x0000;
+        reg_low = 0x1027;
 
-    match registers_to_u32(reg_high, reg_low, "low_first", "big_endian") {
-        Ok(value) => {
-            println!("转换后的浮点数为: {:.2}", value); // 期望输出 ~10000
-            assert_eq!(value, 10000);
+        match registers_to_u32(reg_high, reg_low, "low_first", "little_endian") {
+            Ok(value) => {
+                println!("转换后的浮点数为: {:.2}", value); // 期望输出 ~10000
+                assert_eq!(value, 10000);
+            }
+            Err(e) => eprintln!("转换错误: {}", e),
         }
-        Err(e) => eprintln!("转换错误: {}", e),
-    }
-
-    reg_high = 0x1027;
-    reg_low = 0x0000;
-
-    match registers_to_u32(reg_high, reg_low, "high_first", "little_endian") {
-        Ok(value) => {
-            println!("转换后的浮点数为: {:.2}", value); // 期望输出 ~10000
-            assert_eq!(value, 10000);
-        }
-        Err(e) => eprintln!("转换错误: {}", e),
-    }
-
-    reg_high = 0x0000;
-    reg_low = 0x1027;
-
-    match registers_to_u32(reg_high, reg_low, "low_first", "little_endian") {
-        Ok(value) => {
-            println!("转换后的浮点数为: {:.2}", value); // 期望输出 ~10000
-            assert_eq!(value, 10000);
-        }
-        Err(e) => eprintln!("转换错误: {}", e),
     }
 }
