@@ -1,4 +1,15 @@
 fn main() {
+    {
+        use std::env;
+
+        let sqlite = env::var("CARGO_FEATURE_SQLITE").is_ok();
+        let mysql = env::var("CARGO_FEATURE_MYSQL").is_ok();
+        let postgres = env::var("CARGO_FEATURE_POSTGRES").is_ok();
+
+        if (sqlite && mysql && postgres) || (sqlite && mysql) || (sqlite && postgres) || (mysql && postgres) {
+            panic!("Features 'sqlite', 'mysql' and 'postgres' cannot be enabled together.");
+        }
+    }
     #[cfg(feature = "imv-camera")]
     {
         use std::env;

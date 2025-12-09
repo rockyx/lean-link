@@ -70,15 +70,17 @@ hex = "0.4.3"
 bindgen = "0.72.1"
 
 [features]
-default = ["web", "sqlite"]
+default = []
+# 数据库选择其中一个
 sqlite = ["sea-orm/sqlx-sqlite", "sea-orm-migration/sqlx-sqlite"]
 mysql = ["sea-orm/sqlx-mysql", "sea-orm-migration/sqlx-mysql"]
 postgres = ["sea-orm/sqlx-postgres", "sea-orm-migration/sqlx-postgres"]
+
 web = ["actix-web", "tracing-actix-web", "jsonwebtoken", "tokio-tungstenite", "actix-utils", "sea-orm/runtime-actix"]
 serialport = ["tokio-serial", "dep:serialport"]
 mqtt = ["rumqttc"]
 modbus = ["tokio-modbus", "serialport"]
 socket = ["tokio-tungstenite"]
 imv-camera = []
-all = ["sqlite", "mysql", "postgres", "web", "serialport", "mqtt", "modbus", "socket", "imv-camera"]
+all = ["postgres", "web", "serialport", "mqtt", "modbus", "socket", "imv-camera"]
 
