@@ -150,7 +150,7 @@ impl Default for Sys {
             sync_time_from_client: false,
             sync_time_from_rtc: false,
             rtc_i2c_dev: "/dev/i2c-1".to_string(),
-            rtc_i2c_addr: 0x68
+            rtc_i2c_addr: 0x68,
         }
     }
 }
@@ -215,53 +215,59 @@ pub fn load_config(app_name: &str) -> std::io::Result<ServerConfig> {
     Ok(config)
 }
 
-#[test]
-fn test_get_config_path() {
-    use directories::BaseDirs;
-    // println!("{}", std::env::current_exe().ok().unwrap().parent().unwrap().to_str().unwrap());
-    println!("{:?}", std::env::current_exe().ok().unwrap());
-    if cfg!(target_os = "linux") {
-        let linux_path = get_config_path("my_app");
-        let mut expected_path = PathBuf::new();
-        expected_path.push("/etc");
-        expected_path.push("my_app");
-        expected_path.push("config.yaml");
-        assert_eq!(linux_path, Some(expected_path));
-    }
+#[cfg(test)]
+mod tests {
+    use crate::config::*;
+    use crate::ServerConfig;
 
-    if cfg!(target_os = "windows") {
-        let windows_path = get_config_path("my_app");
-        let mut expected_path = std::env::current_exe()
-            .ok()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .to_path_buf();
-        expected_path.push("etc");
-        expected_path.push("config.yaml");
-        assert_eq!(windows_path, Some(expected_path));
-    }
-
-    if cfg!(target_os = "macos") {
-        let macos_path = get_config_path("my_app");
-        let mut expected_path = PathBuf::new();
-        if let Some(base_dirs) = BaseDirs::new() {
-            let home_dir = base_dirs.home_dir();
-            expected_path.push(home_dir);
-            println!("Home directory: {}", home_dir.display());
+    #[test]
+    fn test_get_config_path() {
+        use directories::BaseDirs;
+        // println!("{}", std::env::current_exe().ok().unwrap().parent().unwrap().to_str().unwrap());
+        println!("{:?}", std::env::current_exe().ok().unwrap());
+        if cfg!(target_os = "linux") {
+            let linux_path = get_config_path("my_app");
+            let mut expected_path = PathBuf::new();
+            expected_path.push("/etc");
+            expected_path.push("my_app");
+            expected_path.push("config.yaml");
+            assert_eq!(linux_path, Some(expected_path));
         }
 
-        expected_path.push("Library");
-        expected_path.push("Application Support");
-        expected_path.push("com.my_app");
-        expected_path.push("config.yaml");
+        if cfg!(target_os = "windows") {
+            let windows_path = get_config_path("my_app");
+            let mut expected_path = std::env::current_exe()
+                .ok()
+                .unwrap()
+                .parent()
+                .unwrap()
+                .to_path_buf();
+            expected_path.push("etc");
+            expected_path.push("config.yaml");
+            assert_eq!(windows_path, Some(expected_path));
+        }
 
-        assert_eq!(macos_path, Some(expected_path));
+        if cfg!(target_os = "macos") {
+            let macos_path = get_config_path("my_app");
+            let mut expected_path = PathBuf::new();
+            if let Some(base_dirs) = BaseDirs::new() {
+                let home_dir = base_dirs.home_dir();
+                expected_path.push(home_dir);
+                println!("Home directory: {}", home_dir.display());
+            }
+
+            expected_path.push("Library");
+            expected_path.push("Application Support");
+            expected_path.push("com.my_app");
+            expected_path.push("config.yaml");
+
+            assert_eq!(macos_path, Some(expected_path));
+        }
     }
-}
 
-#[test]
-fn test_load_config() {
-    let config: ServerConfig = load_config("leanlink").expect("Failed to load config");
-    println!("{:#?}", config);
+    #[test]
+    fn test_load_config() {
+        let config: ServerConfig = load_config("leanlink").expect("Failed to load config");
+        println!("{:#?}", config);
+    }
 }

@@ -142,90 +142,100 @@ where
     }
 }
 
-#[tokio::test]
-async fn test_serial_port_group() {
-    tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::DEBUG)
-        .init();
+#[cfg(test)]
+mod tests {
+    #[tokio::test]
+    async fn test_serial_port_group() {
+        tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::DEBUG)
+            .init();
 
-    #[derive(Clone)]
-    struct MyFrame {
-        data: bytes::Bytes,
-    }
-    impl FrameAck for MyFrame {
-        fn is_ack(&self) -> bool {
-            false
+        #[derive(Clone)]
+        struct MyFrame {
+            data: bytes::Bytes,
         }
-    }
-
-    struct MyCodec {}
-
-    impl Default for MyCodec {
-        fn default() -> Self {
-            Self {}
-        }
-    }
-
-    impl tokio_util::codec::Decoder for MyCodec {
-        type Item = MyFrame;
-        type Error = std::io::Error;
-
-        fn decode(&mut self, src: &mut bytes::BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-            if src.is_empty() {
-                return Ok(None);
-            }
-            if src.len() < 11 {
-                return Ok(None);
-            }
-
-            let len = src.len();
-            let data = src.split_to(len);
-            Ok(Some(MyFrame {
-                data: data.freeze(),
-            }))
-        }
-    }
-
-    impl tokio_util::codec::Encoder<MyFrame> for MyCodec {
-        type Error = std::io::Error;
-
-        fn encode(&mut self, item: MyFrame, dst: &mut bytes::BytesMut) -> Result<(), Self::Error> {
-            dst.extend_from_slice(&item.data);
-            Ok(())
-        }
-    }
-
-    let serial_port = super::SerialPortBuilder::new("/dev/tty.usbserial-0001".into(), 9600)
-        .with_timeout(std::time::Duration::from_secs(5))
-        .build::<MyFrame, MyCodec>();
-
-    let mut serial_port_group = SerialPortGroup::new();
-    serial_port_group
-        .add_serialport("/dev/tty.usbserial-0001", serial_port)
-        .await;
-
-    loop {
-        {
-            let result = serial_port_group
-                .send(MyFrame {
-                    data: bytes::Bytes::from_static(b"value"),
-                })
-                .await;
-            if result.is_ok() {
-                tracing::info!("Sended frame");
-            } else if result.is_err() {
-                tracing::error!("Error sending frame: {:?}", result.err());
-            }
-        }
-        {
-            let result = serial_port_group.next().await;
-            if result.is_ok() {
-                tracing::info!("Received frame");
-            } else if result.is_err() {
-                tracing::error!("Error receiving frame: {:?}", result.err());
+        impl FrameAck for MyFrame {
+            fn is_ack(&self) -> bool {
+                false
             }
         }
 
-        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        struct MyCodec {}
+
+        impl Default for MyCodec {
+            fn default() -> Self {
+                Self {}
+            }
+        }
+
+        impl tokio_util::codec::Decoder for MyCodec {
+            type Item = MyFrame;
+            type Error = std::io::Error;
+
+            fn decode(
+                &mut self,
+                src: &mut bytes::BytesMut,
+            ) -> Result<Option<Self::Item>, Self::Error> {
+                if src.is_empty() {
+                    return Ok(None);
+                }
+                if src.len() < 11 {
+                    return Ok(None);
+                }
+
+                let len = src.len();
+                let data = src.split_to(len);
+                Ok(Some(MyFrame {
+                    data: data.freeze(),
+                }))
+            }
+        }
+
+        impl tokio_util::codec::Encoder<MyFrame> for MyCodec {
+            type Error = std::io::Error;
+
+            fn encode(
+                &mut self,
+                item: MyFrame,
+                dst: &mut bytes::BytesMut,
+            ) -> Result<(), Self::Error> {
+                dst.extend_from_slice(&item.data);
+                Ok(())
+            }
+        }
+
+        let serial_port = super::SerialPortBuilder::new("/dev/tty.usbserial-0001".into(), 9600)
+            .with_timeout(std::time::Duration::from_secs(5))
+            .build::<MyFrame, MyCodec>();
+
+        let mut serial_port_group = SerialPortGroup::new();
+        serial_port_group
+            .add_serialport("/dev/tty.usbserial-0001", serial_port)
+            .await;
+
+        loop {
+            {
+                let result = serial_port_group
+                    .send(MyFrame {
+                        data: bytes::Bytes::from_static(b"value"),
+                    })
+                    .await;
+                if result.is_ok() {
+                    tracing::info!("Sended frame");
+                } else if result.is_err() {
+                    tracing::error!("Error sending frame: {:?}", result.err());
+                }
+            }
+            {
+                let result = serial_port_group.next().await;
+                if result.is_ok() {
+                    tracing::info!("Received frame");
+                } else if result.is_err() {
+                    tracing::error!("Error receiving frame: {:?}", result.err());
+                }
+            }
+
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        }
     }
 }
