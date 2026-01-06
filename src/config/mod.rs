@@ -14,11 +14,29 @@ pub struct DatabaseConfig {
     pub url: String,
 }
 
+impl Default for DatabaseConfig {
+    fn default() -> Self {
+        DatabaseConfig {
+            url: "sqlite://leanlink.db".to_string(),
+        }
+    }
+}
+
 #[cfg(feature = "web")]
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct WebConfig {
     pub host: String,
     pub port: u16,
+}
+
+#[cfg(feature = "web")]
+impl Default for WebConfig {
+    fn default() -> Self {
+        WebConfig {
+            host: "127.0.0.1".to_string(),
+            port: 8080,
+        }
+    }
 }
 
 #[cfg(feature = "web")]
@@ -32,6 +50,18 @@ pub struct WebSocketConfig {
 }
 
 #[cfg(feature = "web")]
+impl Default for WebSocketConfig {
+    fn default() -> Self {
+        WebSocketConfig {
+            host: "127.0.0.1".to_string(),
+            port: 8081,
+            max_connections: 100,
+            heartbeat_interval: Duration::from_secs(30),
+        }
+    }
+}
+
+#[cfg(feature = "web")]
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct JwtConfig {
     pub secret: String,
@@ -39,11 +69,31 @@ pub struct JwtConfig {
     pub expires_in: Duration,
 }
 
+#[cfg(feature = "web")]
+impl Default for JwtConfig {
+    fn default() -> Self {
+        JwtConfig {
+            secret: "secret".to_string(),
+            expires_in: Duration::from_secs(3600),
+        }
+    }
+}
+
 #[cfg(feature = "modbus")]
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct ModbusTCPConfig {
     pub host: String,
     pub port: u16,
+}
+
+#[cfg(feature = "modbus")]
+impl Default for ModbusTCPConfig {
+    fn default() -> Self {
+        ModbusTCPConfig {
+            host: "192.168.1.100".to_string(),
+            port: 502,
+        }
+    }
 }
 
 #[cfg(feature = "modbus")]
@@ -59,6 +109,21 @@ pub struct ModbusRTUConfig {
     pub timeout: Duration,
 }
 
+#[cfg(feature = "modbus")]
+impl Default for ModbusRTUConfig {
+    fn default() -> Self {
+        ModbusRTUConfig {
+            path: "/dev/ttyUSB0".to_string(),
+            baud_rate: 9600,
+            data_bits: DataBits::Eight,
+            stop_bits: StopBits::One,
+            parity: Parity::None,
+            flow_control: FlowControl::None,
+            timeout: Duration::from_secs(1),
+        }
+    }
+}
+
 #[cfg(feature = "serialport")]
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct SerialPortConfig {
@@ -72,12 +137,38 @@ pub struct SerialPortConfig {
     pub timeout: Duration,
 }
 
+#[cfg(feature = "serialport")]
+impl Default for SerialPortConfig {
+    fn default() -> Self {
+        SerialPortConfig {
+            path: "/dev/ttyUSB0".to_string(),
+            baud_rate: 9600,
+            data_bits: DataBits::Eight,
+            stop_bits: StopBits::One,
+            parity: Parity::None,
+            flow_control: FlowControl::None,
+            timeout: Duration::from_secs(1),
+        }
+    }
+}
+
+
 #[cfg(feature = "mqtt")]
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct MqttTopic {
     pub topic: String,
     #[serde(with = "string_to_qos")]
     pub qos: QoS,
+}
+
+#[cfg(feature = "mqtt")]
+impl Default for MqttTopic {
+    fn default() -> Self {
+        MqttTopic {
+            topic: "leanlink/topic".to_string(),
+            qos: QoS::AtLeastOnce,
+        }
+    }
 }
 
 #[cfg(feature = "mqtt")]
@@ -91,6 +182,21 @@ pub struct MqttConfig {
     pub topic: Vec<MqttTopic>,
     #[serde(with = "crate::utils::datetime::string_to_duration")]
     pub keep_alive: Duration,
+}
+
+#[cfg(feature = "mqtt")]
+impl Default for MqttConfig {
+    fn default() -> Self {
+        MqttConfig {
+            host: "localhost".to_string(),
+            port: 1883,
+            username: "user".to_string(),
+            password: "password".to_string(),
+            client_id: "leanlink_client".to_string(),
+            topic: vec![MqttTopic::default()],
+            keep_alive: Duration::from_secs(60),
+        }
+    }
 }
 
 #[cfg(feature = "mqtt")]
@@ -131,6 +237,18 @@ pub struct SocketConfig {
     pub max_connections: u32,
     #[serde(with = "crate::utils::datetime::string_to_duration")]
     pub heartbeat_interval: Duration,
+}
+
+#[cfg(feature = "socket")]
+impl Default for SocketConfig {
+    fn default() -> Self {
+        SocketConfig {
+            host: "0.0.0.0".to_string(),
+            port: 9000,
+            max_connections: 100,
+            heartbeat_interval: Duration::from_secs(30),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -177,6 +295,31 @@ pub struct ServerConfig {
     pub sys: Sys,
     #[cfg(feature = "socket")]
     pub socket: Vec<SocketConfig>,
+}
+
+impl Default for ServerConfig {
+    fn default() -> Self {
+        ServerConfig {
+            database: DatabaseConfig::default(),
+            #[cfg(feature = "web")]
+            web: WebConfig::default(),
+            #[cfg(feature = "web")]
+            jwt: JwtConfig::default(),
+            #[cfg(feature = "web")]
+            web_socket: WebSocketConfig::default(),
+            #[cfg(feature = "modbus")]
+            modbus_tcp: vec![ModbusTCPConfig::default()],
+            #[cfg(feature = "modbus")]
+            modbus_rtu: vec![ModbusRTUConfig::default()],
+            #[cfg(feature = "serialport")]
+            serialport: vec![SerialPortConfig::default()],
+            #[cfg(feature = "mqtt")]
+            mqtt: vec![MqttConfig::default()],
+            sys: Sys::default(),
+            #[cfg(feature = "socket")]
+            socket: vec![SocketConfig::default()],
+        }
+    }
 }
 
 /// Get the cross-platform configuration file path

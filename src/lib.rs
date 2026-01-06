@@ -108,8 +108,8 @@ impl AppStateBuilder {
         self
     }
 
-    pub fn with_server_config(mut self, config: ServerConfig) -> Self {
-        self.server_config = Some(config);
+    pub fn with_server_config(mut self, config: &ServerConfig) -> Self {
+        self.server_config = Some(config.clone());
         self
     }
 
