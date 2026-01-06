@@ -1,6 +1,4 @@
-use crate::{
-    config::ServerConfig,
-};
+use crate::config::ServerConfig;
 #[cfg(feature = "web")]
 use crate::service::websocket::{WebSocketMessage, WebSocketServer};
 use sea_orm::{Database, DatabaseConnection};
@@ -21,7 +19,7 @@ pub use regex;
 pub use rust_decimal;
 pub use rust_decimal_macros;
 pub use serde_json;
-pub use serde_yaml;
+pub use serde_yaml_bw;
 pub use smallvec;
 pub use thiserror;
 pub use tsink;
@@ -85,6 +83,101 @@ pub mod storage;
 pub mod utils;
 // pub use lean_link_macros::*;
 
+pub struct AppStateBuilder {
+    app_name: Option<String>,
+    load_config: bool,
+    server_config: Option<ServerConfig>,
+}
+
+impl AppStateBuilder {
+    pub fn new() -> Self {
+        Self {
+            app_name: None,
+            load_config: true,
+            server_config: None,
+        }
+    }
+
+    pub fn with_app_name(mut self, app_name: &str) -> Self {
+        self.app_name = Some(app_name.to_string());
+        self
+    }
+
+    pub fn with_load_config(mut self, load: bool) -> Self {
+        self.load_config = load;
+        self
+    }
+
+    pub fn with_server_config(mut self, config: ServerConfig) -> Self {
+        self.server_config = Some(config);
+        self
+    }
+
+    pub async fn build(&self) -> std::io::Result<AppState> {
+        if self.load_config && self.app_name.is_none() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "App name must be provided when load_config is true",
+            ));
+        }
+
+        if self.load_config {
+            AppState::new(self.app_name.as_ref().unwrap().as_str()).await
+        } else {
+            if self.server_config.is_none() {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "Server config must be provided when load_config is false",
+                ));
+            }
+
+            let db_conn =
+                Database::connect(self.server_config.as_ref().unwrap().database.url.clone())
+                    .await
+                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+
+            #[cfg(feature = "web")]
+            let web_socket_server = WebSocketServer::new(
+                self.server_config.as_ref().unwrap().web_socket.clone(),
+                self.server_config.as_ref().unwrap().sys.clone(),
+            );
+
+            #[cfg(target_os = "linux")]
+            {
+                use crate::utils::datetime::set_local_time_from_ds1307;
+                use crate::utils::i2c::path_to_i2c_bus;
+
+                let sync_time_from_rtc = self.server_config.as_ref().unwrap().sys.sync_time_from_rtc;
+                let rtc_i2c_dev = self.server_config.as_ref().unwrap().sys.rtc_i2c_dev.clone();
+                let rtc_i2c_addr = self.server_config.as_ref().unwrap().sys.rtc_i2c_addr;
+                if sync_time_from_rtc {
+                    // sync system time from RTC
+                    let bus_result = path_to_i2c_bus(&rtc_i2c_dev);
+                    if bus_result.is_err() {
+                        tracing::info!("syncSysTime command output: {:?}", bus_result);
+                    } else {
+                        let bus = bus_result.unwrap();
+                        let output = set_local_time_from_ds1307(bus, rtc_i2c_addr);
+                        tracing::info!("syncSysTime command output: {:?}", output);
+                    }
+                }
+            }
+
+            Ok(AppState {
+                db_conn,
+                server_config: self.server_config.as_ref().unwrap().clone(),
+                server_name: self
+                    .app_name
+                    .as_ref()
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| "lean-link-service".to_string()),
+                #[cfg(feature = "web")]
+                ws_server: web_socket_server,
+            })
+        }
+    }
+}
+
 pub struct AppState {
     pub db_conn: DatabaseConnection,
     pub server_config: ServerConfig,
@@ -94,7 +187,7 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub async fn new(server_name: &str) -> std::io::Result<Self> {
+    async fn new(server_name: &str) -> std::io::Result<Self> {
         let server_config = config::load_config(server_name)?;
         let db_conn = Database::connect(server_config.database.url.clone())
             .await

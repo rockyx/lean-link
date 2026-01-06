@@ -207,7 +207,7 @@ pub fn load_config(app_name: &str) -> std::io::Result<ServerConfig> {
 
     // 打开文件并解析
     let file = File::open(normalized_path.as_path())?;
-    let config: ServerConfig = serde_yaml::from_reader(file).map_err(|e| {
+    let config: ServerConfig = serde_yaml_bw::from_reader(file).map_err(|e| {
         std::io::Error::new(
             std::io::ErrorKind::InvalidData,
             format!("Failed to parse config: {}", e),
