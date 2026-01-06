@@ -6,7 +6,8 @@ use serde::{Deserialize, Serialize};
 use serialport::{DataBits, FlowControl, Parity, StopBits};
 use std::path::{Path, PathBuf};
 #[cfg(any(feature = "modbus", feature = "serialport", feature = "web"))]
-use std::{fs::File, time::Duration};
+use std::time::Duration;
+use std::fs::File;
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct DatabaseConfig {

@@ -1,8 +1,10 @@
 use crate::{
     config::ServerConfig,
-    service::websocket::{WebSocketMessage, WebSocketServer},
 };
+#[cfg(feature = "web")]
+use crate::service::websocket::{WebSocketMessage, WebSocketServer};
 use sea_orm::{Database, DatabaseConnection};
+#[cfg(feature = "web")]
 use tokio::sync::mpsc::Receiver;
 
 // Base re-export

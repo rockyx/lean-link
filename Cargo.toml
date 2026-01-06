@@ -16,6 +16,7 @@ build = "build.rs"
 [lib]
 name = "lean_link"
 path = "src/lib.rs"
+crate-type = ["staticlib", "cdylib", "rlib"]
 
 [dependencies]
 uuid = { version = "1.19.0", features = ["std", "serde", "v4", "v7"] }
@@ -29,7 +30,11 @@ futures = "0.3.31"
 futures-util = "0.3.31"
 lean-link-macros = { path = "./lean-link-macros" }
 rumqttc = { version = "0.25.1", optional = true }
-sea-orm = { version = "1.1.19", features = ["default", "runtime-tokio", "debug-print"] }
+sea-orm = { version = "1.1.19", features = [
+    "default",
+    "runtime-tokio",
+    "debug-print",
+] }
 sea-orm-migration = { version = "1.1.19" }
 serde = { version = "1.0.228", features = ["default", "derive"] }
 serde_json = "1.0.145"
@@ -45,9 +50,10 @@ tokio-tungstenite = { version = "0.28.0", optional = true }
 tokio-util = { version = "0.7.17", features = ["codec"] }
 tracing = "0.1.44"
 tracing-subscriber = "0.3.22"
-jsonwebtoken = { version = "10.2.0", features = ["rust_crypto"], optional = true }
+jsonwebtoken = { version = "10.2.0", features = [
+    "rust_crypto",
+], optional = true }
 directories = "6.0.0"
-winapi = { version = "0.3.9", features = ["winnt", "fileapi"] }
 serde_yaml = "0.9.34-deprecated"
 normpath = "1.5.0"
 actix-utils = { version = "3.0.1", optional = true }
@@ -63,7 +69,8 @@ rust_decimal_macros = "1.39.0"
 dashmap = { version = "6.1.0", features = ["serde"] }
 rust_xlsxwriter = "0.92.2"
 hex = "0.4.3"
-
+[target.'cfg(target_os = "windows")'.dependencies]
+winapi = { version = "0.3.9", features = ["winnt", "fileapi"] }
 [dev-dependencies]
 
 [build-dependencies]
@@ -77,11 +84,25 @@ sqlite = ["sea-orm/sqlx-sqlite", "sea-orm-migration/sqlx-sqlite"]
 mysql = ["sea-orm/sqlx-mysql", "sea-orm-migration/sqlx-mysql"]
 postgres = ["sea-orm/sqlx-postgres", "sea-orm-migration/sqlx-postgres"]
 
-web = ["actix-web", "tracing-actix-web", "jsonwebtoken", "tokio-tungstenite", "actix-utils", "sea-orm/runtime-actix"]
+web = [
+    "actix-web",
+    "tracing-actix-web",
+    "jsonwebtoken",
+    "tokio-tungstenite",
+    "actix-utils",
+    "sea-orm/runtime-actix",
+]
 serialport = ["tokio-serial", "dep:serialport"]
 mqtt = ["rumqttc"]
 modbus = ["tokio-modbus", "serialport"]
 socket = ["tokio-tungstenite"]
 imv-camera = []
-all = ["postgres", "web", "serialport", "mqtt", "modbus", "socket", "imv-camera"]
-
+all = [
+    "postgres",
+    "web",
+    "serialport",
+    "mqtt",
+    "modbus",
+    "socket",
+    "imv-camera",
+]
