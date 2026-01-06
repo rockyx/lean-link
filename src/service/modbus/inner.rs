@@ -129,6 +129,12 @@ impl ModbusContext for ModbusTCPContext {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
+    use tokio_modbus::client::Reader;
+
+    use crate::service::modbus::inner::{ModbusContext, ModbusRTUContext};
+
     #[tokio::test]
     async fn test_modbus_rtu() {
         tracing_subscriber::fmt()

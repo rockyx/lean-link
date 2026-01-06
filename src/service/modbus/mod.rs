@@ -575,6 +575,8 @@ pub fn registers_to_u32(
 
 #[cfg(test)]
 mod tests {
+    use crate::service::modbus::{ModbusRTUBuilder, registers_to_f32, registers_to_u32};
+
     #[tokio::test]
     async fn test_modbus() {
         tracing_subscriber::fmt()

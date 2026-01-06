@@ -144,6 +144,8 @@ where
 
 #[cfg(test)]
 mod tests {
+    use crate::service::serialport::{FrameAck, SerialPortBuilder, SerialPortGroup};
+
     #[tokio::test]
     async fn test_serial_port_group() {
         tracing_subscriber::fmt()
@@ -204,7 +206,7 @@ mod tests {
             }
         }
 
-        let serial_port = super::SerialPortBuilder::new("/dev/tty.usbserial-0001".into(), 9600)
+        let serial_port = SerialPortBuilder::new("/dev/tty.usbserial-0001".into(), 9600)
             .with_timeout(std::time::Duration::from_secs(5))
             .build::<MyFrame, MyCodec>();
 

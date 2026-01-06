@@ -217,6 +217,10 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
+    use crate::service::serialport::{FrameAck, SerialPortBuilder};
+
     #[tokio::test]
     async fn test_serial_port() {
         tracing_subscriber::fmt()

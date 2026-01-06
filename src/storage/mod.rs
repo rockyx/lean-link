@@ -1,4 +1,3 @@
-use core::fmt;
 use std::path::{Path, PathBuf};
 
 fn get_td_path(app_name: &str) -> Option<PathBuf> {
