@@ -1,11 +1,12 @@
 use crate::database::entity::{prelude::TSettings, t_settings};
-use sea_orm::{ActiveValue, ColumnTrait, DatabaseConnection, DbErr, EntityTrait, QueryFilter};
+use sea_orm::{ActiveValue, ColumnTrait, DbErr, EntityTrait, QueryFilter};
 use serde::{Serialize, de::DeserializeOwned};
 use uuid::Uuid;
 
-pub async fn setting_get_x<T>(conn: &DatabaseConnection, key: &str) -> Result<T, DbErr>
+pub async fn setting_get_x<T, C>(conn: &C, key: &str) -> Result<T, DbErr>
 where
     T: DeserializeOwned + Default,
+    C: sea_orm::ConnectionTrait,
 {
     let model = TSettings::find()
         .filter(
@@ -22,9 +23,10 @@ where
     })
 }
 
-pub async fn setting_set_x<T>(conn: &DatabaseConnection, key: &str, value: T) -> Result<(), DbErr>
+pub async fn setting_set_x<T, C>(conn: &C, key: &str, value: T) -> Result<(), DbErr>
 where
     T: Serialize + Default,
+    C: sea_orm::ConnectionTrait
 {
     let setting_model = TSettings::find()
         .filter(
