@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::database::entity::PageResult;
 
 pub mod user;
+pub mod default;
 
 #[derive(Serialize, Deserialize)]
 #[repr(u32)]

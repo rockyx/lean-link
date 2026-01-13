@@ -126,6 +126,7 @@ impl Default for ModbusRTUConfig {
 
 #[cfg(feature = "serialport")]
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SerialPortConfig {
     pub path: String,
     pub baud_rate: u32,
