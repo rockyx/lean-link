@@ -36,6 +36,7 @@ pub use tokio;
 pub use tokio_cron_scheduler;
 pub use tokio_retry2;
 pub use tokio_stream;
+pub use tokio_util;
 
 // Database re-export
 pub use sea_orm;
