@@ -7,7 +7,11 @@ use std::{
     },
     time::Duration,
 };
-use tokio::{select, sync::Mutex, time::Instant};
+use tokio::{
+    select,
+    sync::{Mutex, Notify},
+    time::Instant,
+};
 use tokio_serial::SerialPortBuilderExt;
 use tokio_stream::StreamExt;
 use tokio_util::codec::Framed;
@@ -76,7 +80,7 @@ impl SerialPortBuilder {
             timeout: self.timeout,
             _marker: std::marker::PhantomData,
             busy: Arc::new(AtomicBool::new(false)),
-            timeout_timer: Mutex::new(Instant::now()),
+            send_notify: Arc::new(Notify::new()),
         }
     }
 }
@@ -92,7 +96,7 @@ pub struct SerialPort<T, C> {
     timeout: Duration,
     _marker: std::marker::PhantomData<T>,
     busy: Arc<AtomicBool>,
-    timeout_timer: Mutex<Instant>,
+    send_notify: Arc<Notify>,
 }
 
 impl<T, C> SerialPort<T, C>
@@ -136,14 +140,15 @@ where
     T: FrameAck,
     C: tokio_util::codec::Decoder<Item = T, Error: std::fmt::Debug> + Unpin + Default,
 {
-    fn handle_read_result(read: Option<Result<T, C::Error>>, is_busy: &Arc<AtomicBool>) -> std::io::Result<Option<T>> {
+    fn handle_read_result(
+        read: Option<Result<T, C::Error>>,
+        notify: &Arc<Notify>,
+    ) -> std::io::Result<Option<T>> {
         match read {
             Some(item) => match item {
                 Ok(data) => {
                     if data.is_ack() {
-                        is_busy.store(false, Ordering::Release);
-                    } else {
-                        tracing::info!("Received Data frame");
+                        notify.notify_one();
                     }
                     Ok(Some(data))
                 }
@@ -166,45 +171,14 @@ where
     }
 
     pub async fn next(&mut self) -> std::io::Result<Option<T>> {
-        let is_busy = self.busy.clone();
-        let will_timeout = self.will_timeout();
         self.connect_port()?;
 
         let framed = self.framed.as_mut().unwrap();
+        let send_notify = self.send_notify.clone();
 
-        // 如果将要超时且当前不在忙碌状态(is_busy为false)，则设置超时开始时间为现在
-        if will_timeout && !is_busy.load(Ordering::Acquire) {
-            *self.timeout_timer.lock().await = Instant::now();
-        }
-
-        // 检查是否超时
-        if will_timeout && is_busy.load(Ordering::Acquire) {
-            let elapsed = Instant::now().duration_since(*self.timeout_timer.lock().await);
-            if elapsed >= self.timeout {
-                // 已超时，释放忙碌状态
-                is_busy.store(false, Ordering::Release);
-                return Err(std::io::Error::new(std::io::ErrorKind::TimedOut, "SerialPort read timeout"));
-            }
-
-            // 计算剩余超时时间
-            let timeout_remain = self.timeout - elapsed;
-
-            select! {
-                read = framed.next() => {
-                    Self::handle_read_result(read, &is_busy)
-                }
-
-                _ = tokio::time::sleep(timeout_remain), if will_timeout && is_busy.load(Ordering::Acquire) => {
-                    is_busy.store(false, Ordering::Release);
-                    return Err(std::io::Error::new(std::io::ErrorKind::TimedOut, "SerialPort read timeout"));
-                }
-            }
-        } else {
-            // 没有启用超时或不在忙碌状态，直接等待数据
-            select! {
-                read = framed.next() => {
-                    Self::handle_read_result(read, &is_busy)
-                }
+        select! {
+            read = framed.next() => {
+                Self::handle_read_result(read, &send_notify)
             }
         }
     }
@@ -220,21 +194,41 @@ where
 
         if self.is_busy() {
             return Err(std::io::Error::new(
-                std::io::ErrorKind::WouldBlock,
+                std::io::ErrorKind::ResourceBusy,
                 "SerialPort is busy",
             ));
         }
 
         let framed = self.framed.as_mut().unwrap();
         match framed.send(frame).await {
-            Ok(()) => {
-                if self.will_timeout() {
-                    tracing::info!("SerialPort send with timeout");
-                    self.busy.store(true, Ordering::Release);
-                    *self.timeout_timer.lock().await = Instant::now();
-                }
-                Ok(())
+            Ok(()) => Ok(()),
+            Err(e) => {
+                self.framed = None;
+                Err(e)
             }
+        }
+    }
+
+    pub async fn send_with_timeout(&mut self, frame: T) -> std::io::Result<()> {
+        self.connect_port()?;
+
+        if self.is_busy() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::ResourceBusy,
+                "SerialPort is busy",
+            ));
+        }
+
+        if !self.will_timeout() {
+            return Err(std::io::Error::new(std::io::ErrorKind::Other, "SerialPort timeout not set"));
+        }
+
+        let framed = self.framed.as_mut().unwrap();
+        match framed.send(frame).await {
+            Ok(()) => match tokio::time::timeout(self.timeout, self.send_notify.notified()).await {
+                Ok(_) => Ok(()),
+                Err(e) => Err(std::io::Error::new(std::io::ErrorKind::TimedOut, e)),
+            },
             Err(e) => {
                 self.framed = None;
                 Err(e)
