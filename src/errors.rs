@@ -39,6 +39,8 @@ pub enum Error {
     NullError(#[from] std::ffi::NulError),
     #[error("Into String Error: {0}")]
     IntoStringError(#[from] std::ffi::IntoStringError),
+    #[error("BadRequest Error: {0} - {1}")]
+    BadRequest(ErrorCode, String),
 }
 
 #[cfg(feature = "web")]
@@ -70,6 +72,11 @@ impl actix_web::error::ResponseError for Error {
             Error::InternalError(code) => {
                 actix_web::HttpResponse::build(actix_web::http::StatusCode::INTERNAL_SERVER_ERROR)
                     .json(WebResponse::<()>::with_error_code(code))
+            }
+            Error::BadRequest(code, message) => {
+                actix_web::HttpResponse::build(actix_web::http::StatusCode::BAD_REQUEST).json(
+                    WebResponse::<()>::with_error_code_and_message(code, message.clone()),
+                )
             }
             _ => actix_web::HttpResponse::new(actix_web::http::StatusCode::INTERNAL_SERVER_ERROR),
         }

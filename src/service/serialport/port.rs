@@ -7,7 +7,7 @@ use std::{
     },
     time::Duration,
 };
-use tokio::select;
+use tokio::{select, sync::Mutex, time::Instant};
 use tokio_serial::SerialPortBuilderExt;
 use tokio_stream::StreamExt;
 use tokio_util::codec::Framed;
@@ -76,6 +76,7 @@ impl SerialPortBuilder {
             timeout: self.timeout,
             _marker: std::marker::PhantomData,
             busy: Arc::new(AtomicBool::new(false)),
+            timeout_timer: Mutex::new(Instant::now()),
         }
     }
 }
@@ -91,6 +92,7 @@ pub struct SerialPort<T, C> {
     timeout: Duration,
     _marker: std::marker::PhantomData<T>,
     busy: Arc<AtomicBool>,
+    timeout_timer: Mutex<Instant>,
 }
 
 impl<T, C> SerialPort<T, C>
@@ -136,7 +138,20 @@ where
 {
     pub async fn next(&mut self) -> std::io::Result<Option<T>> {
         let is_busy = self.busy.clone();
+        let will_timeout = self.will_timeout();
         self.connect_port()?;
+
+        let mut timeout_remain = Duration::ZERO;
+
+        if will_timeout && is_busy.load(Ordering::Acquire) {
+            timeout_remain = self.timeout - Instant::now().duration_since(*self.timeout_timer.lock().await);
+            if timeout_remain <= Duration::ZERO {
+                // timeout now
+                // release is_busy
+                is_busy.store(false, Ordering::Release);
+                return Err(std::io::Error::new(std::io::ErrorKind::TimedOut, "SerialPort read timeout"));
+            }
+        }
 
         let framed = self.framed.as_mut().unwrap();
         select! {
@@ -145,7 +160,6 @@ where
                     Some(item) => match item {
                         Ok(data) => {
                             if data.is_ack() {
-                                tracing::info!("Received ACK frame");
                                 is_busy.store(false, Ordering::Release);
                             } else {
                                 tracing::info!("Received Data frame");
@@ -170,6 +184,11 @@ where
                         ));
                     }
                 }
+            }
+
+            _ = tokio::time::sleep(timeout_remain), if will_timeout && is_busy.load(Ordering::Acquire) => {
+                is_busy.store(false, Ordering::Release);
+                return Err(std::io::Error::new(std::io::ErrorKind::TimedOut, "SerialPort read timeout"));
             }
 
             // _ = tokio::time::sleep(self.timeout), if is_busy.load(Ordering::Acquire) => {
@@ -204,6 +223,7 @@ where
                 if self.will_timeout() {
                     tracing::info!("SerialPort send with timeout");
                     self.busy.store(true, Ordering::Release);
+                    *self.timeout_timer.lock().await = Instant::now();
                 }
                 Ok(())
             }

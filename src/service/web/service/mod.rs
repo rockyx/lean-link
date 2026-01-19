@@ -1,9 +1,11 @@
+use std::fmt::Display;
+
+use crate::database::entity::PageResult;
 use actix_web::web;
 use serde::{Deserialize, Serialize};
-use crate::database::entity::PageResult;
 
-pub mod user;
 pub mod default;
+pub mod user;
 
 #[derive(Serialize, Deserialize)]
 #[repr(u32)]
@@ -12,7 +14,21 @@ pub enum ErrorCode {
     Success = 0,
     InvalidUsernameOrPassword = 10001,
     Unauthorized = 10002,
+    OperationNotAllow = 20001,
     InternalError = 50001,
+}
+
+impl Display for ErrorCode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let message = match self {
+            ErrorCode::Success => "操作成功",
+            ErrorCode::InvalidUsernameOrPassword => "用户名或密码无效",
+            ErrorCode::Unauthorized => "未经授权的访问",
+            ErrorCode::OperationNotAllow => "不允许执行该操作",
+            ErrorCode::InternalError => "服务器内部错误",
+        };
+        write!(f, "{}", message)
+    }
 }
 
 fn error_code_to_u32<S>(code: &ErrorCode, serializer: S) -> Result<S::Ok, S::Error>
