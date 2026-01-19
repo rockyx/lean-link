@@ -7,11 +7,7 @@ use std::{
     },
     time::Duration,
 };
-use tokio::{
-    select,
-    sync::{Mutex, Notify},
-    time::Instant,
-};
+use tokio::{select, sync::Notify};
 use tokio_serial::SerialPortBuilderExt;
 use tokio_stream::StreamExt;
 use tokio_util::codec::Framed;
@@ -220,7 +216,10 @@ where
         }
 
         if !self.will_timeout() {
-            return Err(std::io::Error::new(std::io::ErrorKind::Other, "SerialPort timeout not set"));
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "SerialPort timeout not set",
+            ));
         }
 
         let framed = self.framed.as_mut().unwrap();
