@@ -136,68 +136,76 @@ where
     T: FrameAck,
     C: tokio_util::codec::Decoder<Item = T, Error: std::fmt::Debug> + Unpin + Default,
 {
+    fn handle_read_result(read: Option<Result<T, C::Error>>, is_busy: &Arc<AtomicBool>) -> std::io::Result<Option<T>> {
+        match read {
+            Some(item) => match item {
+                Ok(data) => {
+                    if data.is_ack() {
+                        is_busy.store(false, Ordering::Release);
+                    } else {
+                        tracing::info!("Received Data frame");
+                    }
+                    Ok(Some(data))
+                }
+                Err(e) => {
+                    tracing::error!("Error reading from serial port: {:?}", e);
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        "Error reading from serial port",
+                    ));
+                }
+            },
+            None => {
+                tracing::info!("SerialPort disconnected");
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::NotConnected,
+                    "SerialPort disconnected",
+                ));
+            }
+        }
+    }
+
     pub async fn next(&mut self) -> std::io::Result<Option<T>> {
         let is_busy = self.busy.clone();
         let will_timeout = self.will_timeout();
         self.connect_port()?;
 
-        let mut timeout_remain = Duration::ZERO;
+        let framed = self.framed.as_mut().unwrap();
 
-        if will_timeout && is_busy.load(Ordering::Acquire) {
-            timeout_remain = self.timeout - Instant::now().duration_since(*self.timeout_timer.lock().await);
-            if timeout_remain <= Duration::ZERO {
-                // timeout now
-                // release is_busy
-                is_busy.store(false, Ordering::Release);
-                return Err(std::io::Error::new(std::io::ErrorKind::TimedOut, "SerialPort read timeout"));
-            }
+        // 如果将要超时且当前不在忙碌状态(is_busy为false)，则设置超时开始时间为现在
+        if will_timeout && !is_busy.load(Ordering::Acquire) {
+            *self.timeout_timer.lock().await = Instant::now();
         }
 
-        let framed = self.framed.as_mut().unwrap();
-        select! {
-            read = framed.next() => {
-                match read {
-                    Some(item) => match item {
-                        Ok(data) => {
-                            if data.is_ack() {
-                                is_busy.store(false, Ordering::Release);
-                            } else {
-                                tracing::info!("Received Data frame");
-                            }
-                            return Ok(Some(data));
-                        }
-                        Err(e) => {
-                            tracing::error!("Error reading from serial port: {:?}", e);
-                            self.framed = None;
-                            return Err(std::io::Error::new(
-                                std::io::ErrorKind::Other,
-                                "Error reading from serial port",
-                            ));
-                        }
-                    },
-                    None => {
-                        tracing::info!("SerialPort disconnected");
-                        self.framed = None;
-                        return Err(std::io::Error::new(
-                            std::io::ErrorKind::NotConnected,
-                            "SerialPort disconnected",
-                        ));
-                    }
-                }
-            }
-
-            _ = tokio::time::sleep(timeout_remain), if will_timeout && is_busy.load(Ordering::Acquire) => {
+        // 检查是否超时
+        if will_timeout && is_busy.load(Ordering::Acquire) {
+            let elapsed = Instant::now().duration_since(*self.timeout_timer.lock().await);
+            if elapsed >= self.timeout {
+                // 已超时，释放忙碌状态
                 is_busy.store(false, Ordering::Release);
                 return Err(std::io::Error::new(std::io::ErrorKind::TimedOut, "SerialPort read timeout"));
             }
 
-            // _ = tokio::time::sleep(self.timeout), if is_busy.load(Ordering::Acquire) => {
-            //     is_busy.store(false, Ordering::Release);
-            //     return Err(std::io::Error::new(
-            //         std::io::ErrorKind::TimedOut,
-            //         "SerialPort read timeout",
-            //     ));
-            // }
+            // 计算剩余超时时间
+            let timeout_remain = self.timeout - elapsed;
+
+            select! {
+                read = framed.next() => {
+                    Self::handle_read_result(read, &is_busy)
+                }
+
+                _ = tokio::time::sleep(timeout_remain), if will_timeout && is_busy.load(Ordering::Acquire) => {
+                    is_busy.store(false, Ordering::Release);
+                    return Err(std::io::Error::new(std::io::ErrorKind::TimedOut, "SerialPort read timeout"));
+                }
+            }
+        } else {
+            // 没有启用超时或不在忙碌状态，直接等待数据
+            select! {
+                read = framed.next() => {
+                    Self::handle_read_result(read, &is_busy)
+                }
+            }
         }
     }
 }
