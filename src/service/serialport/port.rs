@@ -95,10 +95,7 @@ pub struct SerialPort<T, C> {
     send_notify: Arc<Notify>,
 }
 
-impl<T, C> SerialPort<T, C>
-where
-    C: Default,
-{
+impl<T, C> SerialPort<T, C> {
     fn is_busy(&self) -> bool {
         self.will_timeout() && self.busy.load(Ordering::Acquire)
     }
@@ -106,7 +103,12 @@ where
     pub fn will_timeout(&self) -> bool {
         self.timeout != Duration::from_millis(0)
     }
+}
 
+impl<T, C> SerialPort<T, C>
+where
+    C: Default,
+{
     fn connect_port(&mut self) -> std::io::Result<()> {
         if self.framed.is_none() {
             tracing::info!("Connecting to serial port {}", self.path);
