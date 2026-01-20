@@ -12,9 +12,14 @@ pub async fn insert_log(
     action: String,
     details: Json,
 ) -> Result<InsertResult<t_logs::ActiveModel>, DbErr> {
+    let user_id = if user_id.is_nil() {
+        ActiveValue::set(None)
+    } else {
+        ActiveValue::set(Some(user_id))
+    };
     TLogs::insert(t_logs::ActiveModel {
         id: ActiveValue::set(Uuid::now_v7()),
-        user_id: ActiveValue::set(Some(user_id)),
+        user_id,
         action: ActiveValue::set(action),
         details: ActiveValue::set(details),
         created_at: ActiveValue::not_set(),
