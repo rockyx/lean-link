@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 
 pub mod default;
 pub mod user;
+pub mod log;
 
 #[derive(Serialize, Deserialize)]
 #[repr(u32)]
