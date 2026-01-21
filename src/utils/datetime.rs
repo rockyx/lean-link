@@ -329,3 +329,8 @@ pub fn set_local_time_from_ds1307(bus: u16, addr: u16) -> Result<(), String> {
 pub fn set_local_time_from_ds1307(_bus: u16, _addr: u16) -> Result<(), String> {
     Err("set_local_time_from_ds1307 is only supported on Linux".into())
 }
+
+pub fn duration_to_seconds_string(duration: std::time::Duration, decimals: usize) -> String {
+    let total_seconds = duration.as_secs_f64();
+    format!("{:.*}", decimals, total_seconds)
+}
