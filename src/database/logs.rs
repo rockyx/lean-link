@@ -1,4 +1,8 @@
-use crate::database::entity::{PageResult, prelude::TLogs, t_logs};
+use crate::database::entity::{
+    PageResult,
+    prelude::TLogs,
+    t_logs::{self, LogLevel},
+};
 use chrono::Local;
 use sea_orm::{
     ActiveValue, ColumnTrait, DatabaseConnection, DbErr, EntityTrait, InsertResult, PaginatorTrait,
@@ -11,6 +15,7 @@ pub async fn insert_log(
     user_id: Uuid,
     action: String,
     details: Json,
+    level: LogLevel,
 ) -> Result<InsertResult<t_logs::ActiveModel>, DbErr> {
     let user_id = if user_id.is_nil() {
         ActiveValue::set(None)
@@ -22,6 +27,7 @@ pub async fn insert_log(
         user_id,
         action: ActiveValue::set(action),
         details: ActiveValue::set(details),
+        level: ActiveValue::Set(level),
         created_at: ActiveValue::not_set(),
         deleted_at: ActiveValue::not_set(),
         updated_at: ActiveValue::not_set(),
