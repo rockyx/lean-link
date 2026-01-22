@@ -1,6 +1,7 @@
 use futures_util::sink::SinkExt;
 use serialport::{DataBits, FlowControl, Parity, StopBits};
 use std::{
+    io::Write,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -111,6 +112,40 @@ where
 {
     fn connect_port(&mut self) -> std::io::Result<()> {
         if self.framed.is_none() {
+            #[cfg(target_os = "android")]
+            {
+                use std::process::{Command, Stdio};
+                let output = Command::new("su")
+                    .stdin(Stdio::piped())
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped())
+                    .spawn();
+                if output.is_err() {
+                    tracing::error!("execute su command fail: {:?}", output);
+                } else {
+                    tracing::info!("execute su command success");
+                }
+
+                let mut output = output.unwrap();
+                if let Some(mut stdin) = output.stdin.take() {
+                    let command = format!("chmod 666 {}", self.path);
+
+                    let result = stdin.write_all(command.as_bytes());
+                    if let Err(err) = result {
+                        tracing::error!("execute command fail: {:?}", err);
+                    }
+                    let result = stdin.write_all(b"\n");
+                    if let Err(err) = result {
+                        tracing::error!("execute command fail: {:?}", err);
+                    }
+                    let result = stdin.write_all(b"exit\n");
+                    if let Err(err) = result {
+                        tracing::error!("execute command fail: {:?}", err);
+                    }
+                } else {
+                    tracing::error!("cannot take su stdin");
+                }
+            }
             tracing::info!("Connecting to serial port {}", self.path);
             let serial_port = tokio_serial::new(&self.path, self.baud_rate)
                 .data_bits(self.data_bits)
