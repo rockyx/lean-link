@@ -11,7 +11,12 @@ impl MigrationTrait for Migration {
                 .alter_table(
                     Table::alter()
                         .table("t_logs")
-                        .add_column_if_not_exists(ColumnDef::new("level").string_len(10).not_null())
+                        .add_column_if_not_exists(
+                            ColumnDef::new("level")
+                                .string_len(10)
+                                .not_null()
+                                .default("Info"),
+                        )
                         .to_owned(),
                 )
                 .await?;
