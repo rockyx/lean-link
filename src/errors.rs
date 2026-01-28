@@ -78,6 +78,11 @@ impl actix_web::error::ResponseError for Error {
                     WebResponse::<()>::with_error_code_and_message(code, message.clone()),
                 )
             }
+            Error::Io(e) => {
+                actix_web::HttpResponse::build(actix_web::http::StatusCode::INTERNAL_SERVER_ERROR).json(
+                    WebResponse::<()>::with_error_code_and_message(&ErrorCode::InternalError, e.to_string()),
+                )
+            }
             _ => actix_web::HttpResponse::new(actix_web::http::StatusCode::INTERNAL_SERVER_ERROR),
         }
     }
