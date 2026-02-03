@@ -1,12 +1,12 @@
-use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, Set};
-use sea_orm_migration::prelude::*;
-#[cfg(feature = "postgres")]
-use sea_orm::Statement;
 #[cfg(any(feature = "sqlite", feature = "mysql"))]
 use crate::chrono::Local;
 use crate::database::entity::{prelude::TUsers, t_settings, t_users};
+#[cfg(feature = "postgres")]
+use sea_orm::Statement;
 #[cfg(any(feature = "sqlite", feature = "mysql"))]
 use sea_orm::prelude::DateTimeWithTimeZone;
+use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, Set};
+use sea_orm_migration::prelude::*;
 
 #[derive(DeriveMigrationName)]
 pub struct Migration;
@@ -115,17 +115,13 @@ impl MigrationTrait for Migration {
                                 ColumnDef::new("created_at")
                                     .timestamp_with_time_zone()
                                     .not_null()
-                                    .default(DateTimeWithTimeZone::from(
-                                        Local::now().fixed_offset(),
-                                    )),
+                                    .default(DateTimeWithTimeZone::from(Local::now())),
                             )
                             .col(
                                 ColumnDef::new("updated_at")
                                     .timestamp_with_time_zone()
                                     .not_null()
-                                    .default(DateTimeWithTimeZone::from(
-                                        Local::now().fixed_offset(),
-                                    )),
+                                    .default(DateTimeWithTimeZone::from(Local::now())),
                             )
                             .col(ColumnDef::new("deleted_at").timestamp_with_time_zone())
                             .to_owned(),

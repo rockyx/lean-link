@@ -125,7 +125,10 @@ impl ActiveModelBehavior for ActiveModel {
         Self: ::core::marker::Send + 'async_trait,
     {
         Box::pin(async move {
-            self.updated_at = Set(Local::now().fixed_offset());
+            self.updated_at = Set(DateTimeWithTimeZone::from(Local::now()));
+            if self.created_at.is_not_set() {
+                self.created_at = Set(DateTimeWithTimeZone::from(Local::now()));
+            }
             Ok(self)
         })
     }

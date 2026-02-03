@@ -6,7 +6,7 @@ use crate::database::entity::{
 use chrono::Local;
 use sea_orm::{
     ActiveValue, ColumnTrait, DatabaseConnection, DbErr, EntityTrait, InsertResult, PaginatorTrait,
-    QueryFilter, QueryOrder, UpdateResult, prelude::Json,
+    QueryFilter, QueryOrder, UpdateResult, prelude::{DateTimeWithTimeZone, Json},
 };
 use uuid::Uuid;
 
@@ -27,10 +27,10 @@ pub async fn insert_log(
         user_id,
         action: ActiveValue::set(action),
         details: ActiveValue::set(details),
-        level: ActiveValue::Set(level),
-        created_at: ActiveValue::not_set(),
+        level: ActiveValue::set(level),
+        created_at: ActiveValue::set(DateTimeWithTimeZone::from(Local::now())),
+        updated_at: ActiveValue::set(DateTimeWithTimeZone::from(Local::now())),
         deleted_at: ActiveValue::not_set(),
-        updated_at: ActiveValue::not_set(),
     })
     .exec(conn)
     .await
