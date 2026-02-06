@@ -1,21 +1,9 @@
 use futures_util::sink::SinkExt;
 use serialport::{DataBits, FlowControl, Parity, StopBits};
-use std::{
-    io::Write,
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
-    time::Duration,
-};
-use tokio::{select, sync::Notify};
+use std::{io::Write, time::Duration};
 use tokio_serial::SerialPortBuilderExt;
 use tokio_stream::StreamExt;
 use tokio_util::codec::Framed;
-
-pub trait FrameAck {
-    fn is_ack(&self) -> bool;
-}
 
 pub struct SerialPortBuilder {
     path: String,
@@ -76,8 +64,8 @@ impl SerialPortBuilder {
             stop_bits: self.stop_bits,
             timeout: self.timeout,
             _marker: std::marker::PhantomData,
-            busy: Arc::new(AtomicBool::new(false)),
-            send_notify: Arc::new(Notify::new()),
+            // busy: Arc::new(AtomicBool::new(false)),
+            // send_notify: Arc::new(Notify::new()),
         }
     }
 }
@@ -92,18 +80,18 @@ pub struct SerialPort<T, C> {
     stop_bits: StopBits,
     timeout: Duration,
     _marker: std::marker::PhantomData<T>,
-    busy: Arc<AtomicBool>,
-    send_notify: Arc<Notify>,
+    // busy: Arc<AtomicBool>,
+    // send_notify: Arc<Notify>,
 }
 
 impl<T, C> SerialPort<T, C> {
-    fn is_busy(&self) -> bool {
-        self.will_timeout() && self.busy.load(Ordering::Acquire)
-    }
+    // fn is_busy(&self) -> bool {
+    //     self.will_timeout() && self.busy.load(Ordering::Acquire)
+    // }
 
-    pub fn will_timeout(&self) -> bool {
-        self.timeout != Duration::from_millis(0)
-    }
+    // pub fn will_timeout(&self) -> bool {
+    //     self.timeout != Duration::from_millis(0)
+    // }
 }
 
 impl<T, C> SerialPort<T, C>
@@ -170,21 +158,12 @@ where
 
 impl<T, C> SerialPort<T, C>
 where
-    T: FrameAck,
     C: tokio_util::codec::Decoder<Item = T, Error: std::fmt::Debug> + Unpin + Default,
 {
-    fn handle_read_result(
-        read: Option<Result<T, C::Error>>,
-        notify: &Arc<Notify>,
-    ) -> std::io::Result<Option<T>> {
+    fn handle_read_result(read: Option<Result<T, C::Error>>) -> std::io::Result<Option<T>> {
         match read {
             Some(item) => match item {
-                Ok(data) => {
-                    if data.is_ack() {
-                        notify.notify_one();
-                    }
-                    Ok(Some(data))
-                }
+                Ok(data) => Ok(Some(data)),
                 Err(e) => {
                     tracing::error!("Error reading from serial port: {:?}", e);
                     return Err(std::io::Error::new(
@@ -207,13 +186,7 @@ where
         self.connect_port()?;
 
         let framed = self.framed.as_mut().unwrap();
-        let send_notify = self.send_notify.clone();
-
-        select! {
-            read = framed.next() => {
-                Self::handle_read_result(read, &send_notify)
-            }
-        }
+        Self::handle_read_result(framed.next().await)
     }
 }
 
@@ -225,12 +198,12 @@ where
     pub async fn send(&mut self, frame: T) -> std::io::Result<()> {
         self.connect_port()?;
 
-        if self.is_busy() {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::ResourceBusy,
-                "SerialPort is busy",
-            ));
-        }
+        // if self.is_busy() {
+        //     return Err(std::io::Error::new(
+        //         std::io::ErrorKind::ResourceBusy,
+        //         "SerialPort is busy",
+        //     ));
+        // }
 
         let framed = self.framed.as_mut().unwrap();
         match framed.send(frame).await {
@@ -242,42 +215,42 @@ where
         }
     }
 
-    pub async fn send_with_timeout(&mut self, frame: T) -> std::io::Result<()> {
-        self.connect_port()?;
+    // pub async fn send_with_timeout(&mut self, frame: T) -> std::io::Result<()> {
+    //     self.connect_port()?;
 
-        if self.is_busy() {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::ResourceBusy,
-                "SerialPort is busy",
-            ));
-        }
+    //     if self.is_busy() {
+    //         return Err(std::io::Error::new(
+    //             std::io::ErrorKind::ResourceBusy,
+    //             "SerialPort is busy",
+    //         ));
+    //     }
 
-        if !self.will_timeout() {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "SerialPort timeout not set",
-            ));
-        }
+    //     if !self.will_timeout() {
+    //         return Err(std::io::Error::new(
+    //             std::io::ErrorKind::Other,
+    //             "SerialPort timeout not set",
+    //         ));
+    //     }
 
-        let framed = self.framed.as_mut().unwrap();
-        match framed.send(frame).await {
-            Ok(()) => match tokio::time::timeout(self.timeout, self.send_notify.notified()).await {
-                Ok(_) => Ok(()),
-                Err(e) => Err(std::io::Error::new(std::io::ErrorKind::TimedOut, e)),
-            },
-            Err(e) => {
-                self.framed = None;
-                Err(e)
-            }
-        }
-    }
+    //     let framed = self.framed.as_mut().unwrap();
+    //     match framed.send(frame).await {
+    //         Ok(()) => match tokio::time::timeout(self.timeout, self.send_notify.notified()).await {
+    //             Ok(_) => Ok(()),
+    //             Err(e) => Err(std::io::Error::new(std::io::ErrorKind::TimedOut, e)),
+    //         },
+    //         Err(e) => {
+    //             self.framed = None;
+    //             Err(e)
+    //         }
+    //     }
+    // }
 }
 
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
 
-    use crate::service::serialport::{FrameAck, SerialPortBuilder};
+    use crate::service::serialport::SerialPortBuilder;
 
     #[tokio::test]
     async fn test_serial_port() {
@@ -289,11 +262,11 @@ mod tests {
         struct MyFrame {
             data: bytes::Bytes,
         }
-        impl FrameAck for MyFrame {
-            fn is_ack(&self) -> bool {
-                false
-            }
-        }
+        // impl FrameAck for MyFrame {
+        //     fn is_ack(&self) -> bool {
+        //         false
+        //     }
+        // }
 
         struct MyCodec {}
 

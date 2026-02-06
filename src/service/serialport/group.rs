@@ -1,25 +1,19 @@
-use super::{FrameAck, SerialPort};
+use super::SerialPort;
 use futures::stream::FuturesUnordered;
-use std::{
-    collections::HashMap,
-    sync::{
-        Arc,
-        atomic::{AtomicI16, Ordering},
-    },
-};
+use std::{collections::HashMap, sync::Arc};
 use tokio::{select, sync::RwLock};
 use tokio_stream::StreamExt;
 use tokio_util::sync::CancellationToken;
 
 pub struct SerialPortGroup<T, C> {
     groups: Arc<RwLock<HashMap<String, SerialPort<T, C>>>>,
-    ack_counter: Arc<AtomicI16>,
+    // ack_counter: Arc<AtomicI16>,
     cancel_token: CancellationToken,
 }
 
 impl<T, C> SerialPortGroup<T, C>
 where
-    T: FrameAck + Clone,
+    T: Clone,
     C: tokio_util::codec::Decoder<Item = T, Error: std::fmt::Debug>
         + tokio_util::codec::Encoder<T, Error = std::io::Error>
         + Unpin
@@ -28,7 +22,7 @@ where
     pub fn new() -> Self {
         Self {
             groups: Arc::new(RwLock::new(HashMap::new())),
-            ack_counter: Arc::new(AtomicI16::new(-1)),
+            // ack_counter: Arc::new(AtomicI16::new(-1)),
             cancel_token: CancellationToken::new(),
         }
     }
@@ -51,29 +45,29 @@ where
     }
 
     pub async fn send(&self, frame: T) -> std::io::Result<()> {
-        if self.ack_counter.load(Ordering::Acquire) >= 0 {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::ResourceBusy,
-                "Waiting for ack",
-            ));
-        }
-        let mut need_ack_count = 0;
+        // if self.ack_counter.load(Ordering::Acquire) >= 0 {
+        //     return Err(std::io::Error::new(
+        //         std::io::ErrorKind::ResourceBusy,
+        //         "Waiting for ack",
+        //     ));
+        // }
+        // let mut need_ack_count = 0;
         let mut groups = self.groups.write().await;
         for port in groups.values_mut() {
-            if port.will_timeout() {
-                need_ack_count += 1;
-            }
+            // if port.will_timeout() {
+            //     need_ack_count += 1;
+            // }
             port.send(frame.clone()).await?;
         }
-        if need_ack_count > 0 {
-            self.ack_counter.store(0, Ordering::Release);
-        }
+        // if need_ack_count > 0 {
+        //     self.ack_counter.store(0, Ordering::Release);
+        // }
         Ok(())
     }
 
-    fn reset_ack_counter(&self) {
-        self.ack_counter.store(-1, Ordering::Release);
-    }
+    // fn reset_ack_counter(&self) {
+    //     self.ack_counter.store(-1, Ordering::Release);
+    // }
 
     pub async fn next(&self) -> std::io::Result<Option<T>> {
         let mut groups = self.groups.write().await;
@@ -89,16 +83,16 @@ where
 
         if group_len == 1 {
             let port = groups.values_mut().next().unwrap();
-            self.reset_ack_counter();
+            // self.reset_ack_counter();
             return port.next().await;
         }
 
-        let mut need_ack_count = 0;
+        // let mut need_ack_count = 0;
         let mut futures = FuturesUnordered::new();
         for port in groups.values_mut() {
-            if port.will_timeout() {
-                need_ack_count += 1;
-            }
+            // if port.will_timeout() {
+            //     need_ack_count += 1;
+            // }
             futures.push(port.next());
         }
 
@@ -109,30 +103,31 @@ where
                         Some(Ok(data)) => {
                             match data {
                                 Some(frame) => {
-                                    if frame.is_ack() {
-                                        self.ack_counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                                        if self.ack_counter.load(Ordering::Acquire) as usize >= need_ack_count {
-                                            self.reset_ack_counter();
-                                            return Ok(Some(frame));
-                                        }
-                                    } else {
-                                        self.reset_ack_counter();
-                                        return Ok(Some(frame));
-                                    }
+                                    return Ok(Some(frame));
+                                    // if frame.is_ack() {
+                                    //     self.ack_counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                                    //     if self.ack_counter.load(Ordering::Acquire) as usize >= need_ack_count {
+                                    //         self.reset_ack_counter();
+                                    //         return Ok(Some(frame));
+                                    //     }
+                                    // } else {
+                                    //     self.reset_ack_counter();
+                                    //     return Ok(Some(frame));
+                                    // }
                                 }
                                 None => {
                                     tracing::debug!("No frame received");
-                                    self.reset_ack_counter();
+                                    // self.reset_ack_counter();
                                     return Ok(None);
                                 }
                             }
                         }
                         Some(Err(e)) => {
-                            self.reset_ack_counter();
+                            // self.reset_ack_counter();
                             return Err(e);
                         }
                         None => {
-                            self.reset_ack_counter();
+                            // self.reset_ack_counter();
                             return Ok(None);
                         }
                     }
@@ -144,7 +139,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::service::serialport::{FrameAck, SerialPortBuilder, SerialPortGroup};
+    use crate::service::serialport::{SerialPortBuilder, SerialPortGroup};
 
     #[tokio::test]
     async fn test_serial_port_group() {
@@ -156,11 +151,11 @@ mod tests {
         struct MyFrame {
             data: bytes::Bytes,
         }
-        impl FrameAck for MyFrame {
-            fn is_ack(&self) -> bool {
-                false
-            }
-        }
+        // impl FrameAck for MyFrame {
+        //     fn is_ack(&self) -> bool {
+        //         false
+        //     }
+        // }
 
         struct MyCodec {}
 
