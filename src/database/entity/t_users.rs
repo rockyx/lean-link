@@ -2,14 +2,13 @@ use crate::utils::datetime::{to_local_time, to_local_time_option};
 use chrono::Local;
 use sea_orm::{Set, entity::prelude::*};
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Deserialize, Serialize)]
 #[sea_orm(table_name = "t_users")]
 #[serde(rename_all = "camelCase")]
 pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
-    pub id: Uuid,
+    pub id: uuid::Uuid,
     #[sea_orm(unique_index)]
     pub username: String,
     pub password: String,
@@ -27,7 +26,7 @@ pub enum Relation {}
 impl ActiveModelBehavior for ActiveModel {
     fn new() -> Self {
         Self {
-            id: Set(Uuid::now_v7()),
+            id: Set(uuid::Uuid::now_v7()),
             created_at: Set(Local::now().fixed_offset()),
             updated_at: Set(Local::now().fixed_offset()),
             ..ActiveModelTrait::default()

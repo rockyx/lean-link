@@ -4,7 +4,6 @@ use crate::utils::datetime::{to_local_time, to_local_time_option};
 use chrono::Local;
 use sea_orm::{Set, entity::prelude::*};
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub enum LogLevel {
@@ -83,7 +82,7 @@ impl sea_orm::sea_query::Nullable for LogLevel {
 #[serde(rename_all = "camelCase")]
 pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
-    pub id: Uuid,
+    pub id: uuid::Uuid,
     pub user_id: Option<Uuid>,
     pub action: String,
     pub details: Json,
@@ -102,7 +101,7 @@ pub enum Relation {}
 impl ActiveModelBehavior for ActiveModel {
     fn new() -> Self {
         Self {
-            id: Set(Uuid::now_v7()),
+            id: Set(uuid::Uuid::now_v7()),
             ..ActiveModelTrait::default()
         }
     }

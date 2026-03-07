@@ -19,7 +19,7 @@ path = "src/lib.rs"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [dependencies]
-uuid = { version = "1.19.0", features = ["std", "serde", "v4", "v7"] }
+uuid = { version = "1.21.0", features = ["std", "serde", "v4", "v7"] }
 actix-web = { version = "4.12.1", optional = true }
 tracing-actix-web = { version = "0.7.20", optional = true }
 async-trait = "0.1.88"
@@ -34,6 +34,8 @@ sea-orm = { version = "1.1.19", features = [
     "default",
     "runtime-tokio",
     "debug-print",
+    "with-uuid",
+    "with-json"
 ] }
 sea-orm-migration = { version = "1.1.19" }
 serde = { version = "1.0.228", features = ["default", "derive"] }
