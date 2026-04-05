@@ -45,6 +45,7 @@ pub struct WebSocketConfig {
     pub host: String,
     pub port: u16,
     pub max_connections: u32,
+    pub broadcast_channel_capacity: usize,
     #[serde(with = "crate::utils::datetime::string_to_duration")]
     pub heartbeat_interval: Duration,
 }
@@ -56,6 +57,7 @@ impl Default for WebSocketConfig {
             host: "127.0.0.1".to_string(),
             port: 8081,
             max_connections: 100,
+            broadcast_channel_capacity: 128,
             heartbeat_interval: Duration::from_secs(30),
         }
     }
@@ -381,12 +383,18 @@ mod tests {
 
         if cfg!(target_os = "windows") {
             let windows_path = get_config_path("my_app");
-            let mut expected_path = std::env::current_exe()
-                .ok()
-                .unwrap()
-                .parent()
-                .unwrap()
-                .to_path_buf();
+            let current_exe = match std::env::current_exe() {
+                Ok(exe) => exe,
+                Err(e) => {
+                    panic!("Failed to get current exe: {}", e);
+                }
+            };
+            let mut expected_path = match current_exe.parent() {
+                Some(parent) => parent.to_path_buf(),
+                None => {
+                    panic!("Failed to get parent directory of current exe");
+                }
+            };
             expected_path.push("etc");
             expected_path.push("config.yaml");
             assert_eq!(windows_path, Some(expected_path));
@@ -411,6 +419,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore] // This test requires a real config file
     fn test_load_config() {
         let config: ServerConfig = load_config("leanlink").expect("Failed to load config");
         println!("{:#?}", config);

@@ -222,7 +222,8 @@ SELECT create_t_logs_current_month_partition();
             {
                 Ok(Some(_)) => {}
                 Ok(None) => {
-                    let password = bcrypt::hash("admin", bcrypt::DEFAULT_COST).unwrap();
+                    let password = bcrypt::hash("admin", bcrypt::DEFAULT_COST)
+                        .map_err(|e| sea_orm::DbErr::Custom(format!("Failed to hash password: {}", e)))?;
                     let user = t_users::ActiveModel {
                         username: Set("admin".to_string()),
                         password: Set(password),
@@ -244,7 +245,8 @@ SELECT create_t_logs_current_month_partition();
             {
                 Ok(Some(_)) => {}
                 Ok(None) => {
-                    let password = bcrypt::hash("sys", bcrypt::DEFAULT_COST).unwrap();
+                    let password = bcrypt::hash("sys", bcrypt::DEFAULT_COST)
+                        .map_err(|e| sea_orm::DbErr::Custom(format!("Failed to hash password: {}", e)))?;
                     let user = t_users::ActiveModel {
                         username: Set("sys".to_string()),
                         password: Set(password),
