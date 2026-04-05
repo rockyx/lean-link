@@ -122,24 +122,27 @@ impl AppStateBuilder {
         }
 
         if self.load_config {
-            AppState::new(self.app_name.as_ref().unwrap().as_str()).await
+            let app_name = self.app_name.as_ref()
+                .ok_or_else(|| std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "App name must be provided when load_config is true",
+                ))?;
+            AppState::new(app_name.as_str()).await
         } else {
-            if self.server_config.is_none() {
-                return Err(std::io::Error::new(
+            let server_config = self.server_config.as_ref()
+                .ok_or_else(|| std::io::Error::new(
                     std::io::ErrorKind::InvalidInput,
                     "Server config must be provided when load_config is false",
-                ));
-            }
+                ))?;
 
-            let db_conn =
-                Database::connect(self.server_config.as_ref().unwrap().database.url.clone())
-                    .await
-                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+            let db_conn = Database::connect(server_config.database.url.clone())
+                .await
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
 
             #[cfg(feature = "web")]
             let web_socket_server = WebSocketServer::new(
-                self.server_config.as_ref().unwrap().web_socket.clone(),
-                self.server_config.as_ref().unwrap().sys.clone(),
+                server_config.web_socket.clone(),
+                server_config.sys.clone(),
             );
 
             #[cfg(target_os = "linux")]
@@ -147,26 +150,26 @@ impl AppStateBuilder {
                 use crate::utils::datetime::set_local_time_from_ds1307;
                 use crate::utils::i2c::path_to_i2c_bus;
 
-                let sync_time_from_rtc =
-                    self.server_config.as_ref().unwrap().sys.sync_time_from_rtc;
-                let rtc_i2c_dev = self.server_config.as_ref().unwrap().sys.rtc_i2c_dev.clone();
-                let rtc_i2c_addr = self.server_config.as_ref().unwrap().sys.rtc_i2c_addr;
+                let sync_time_from_rtc = server_config.sys.sync_time_from_rtc;
+                let rtc_i2c_dev = server_config.sys.rtc_i2c_dev.clone();
+                let rtc_i2c_addr = server_config.sys.rtc_i2c_addr;
                 if sync_time_from_rtc {
                     // sync system time from RTC
-                    let bus_result = path_to_i2c_bus(&rtc_i2c_dev);
-                    if bus_result.is_err() {
-                        tracing::info!("syncSysTime command output: {:?}", bus_result);
-                    } else {
-                        let bus = bus_result.unwrap();
-                        let output = set_local_time_from_ds1307(bus, rtc_i2c_addr);
-                        tracing::info!("syncSysTime command output: {:?}", output);
+                    match path_to_i2c_bus(&rtc_i2c_dev) {
+                        Ok(bus) => {
+                            let output = set_local_time_from_ds1307(bus, rtc_i2c_addr);
+                            tracing::info!("syncSysTime command output: {:?}", output);
+                        }
+                        Err(e) => {
+                            tracing::error!("Failed to sync time from RTC: {}", e);
+                        }
                     }
                 }
             }
 
             Ok(AppState {
                 db_conn,
-                server_config: self.server_config.as_ref().unwrap().clone(),
+                server_config: server_config.clone(),
                 server_name: self
                     .app_name
                     .as_ref()
@@ -208,13 +211,14 @@ impl AppState {
             let rtc_i2c_addr = server_config.sys.rtc_i2c_addr;
             if sync_time_from_rtc {
                 // sync system time from RTC
-                let bus_result = path_to_i2c_bus(&rtc_i2c_dev);
-                if bus_result.is_err() {
-                    tracing::info!("syncSysTime command output: {:?}", bus_result);
-                } else {
-                    let bus = bus_result.unwrap();
-                    let output = set_local_time_from_ds1307(bus, rtc_i2c_addr);
-                    tracing::info!("syncSysTime command output: {:?}", output);
+                match path_to_i2c_bus(&rtc_i2c_dev) {
+                    Ok(bus) => {
+                        let output = set_local_time_from_ds1307(bus, rtc_i2c_addr);
+                        tracing::info!("syncSysTime command output: {:?}", output);
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to sync time from RTC: {}", e);
+                    }
                 }
             }
         }

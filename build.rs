@@ -6,7 +6,7 @@ fn main() {
         let mysql = env::var("CARGO_FEATURE_MYSQL").is_ok();
         let postgres = env::var("CARGO_FEATURE_POSTGRES").is_ok();
 
-        if (sqlite && mysql && postgres) || (sqlite && mysql) || (sqlite && postgres) || (mysql && postgres) {
+        if (sqlite as i32 + mysql as i32 + postgres as i32) > 1 {
             panic!("Features 'sqlite', 'mysql' and 'postgres' cannot be enabled together.");
         }
     }

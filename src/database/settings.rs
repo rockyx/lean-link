@@ -48,7 +48,9 @@ where
         model.id = ActiveValue::set(Uuid::now_v7());
         TSettings::insert(model).exec(conn).await?;
     } else {
-        model.id = ActiveValue::set(setting_model.unwrap().id);
+        model.id = ActiveValue::set(setting_model.ok_or_else(|| {
+            sea_orm::DbErr::Custom("Unexpected error: setting_model should not be None here".to_string())
+        })?.id);
         TSettings::update(model).exec(conn).await?;
     };
 

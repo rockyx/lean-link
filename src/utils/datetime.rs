@@ -1,14 +1,17 @@
 use chrono::{DateTime, FixedOffset, Local};
 use serde::Serializer;
 
+/// Helper function to convert DateTime<FixedOffset> to local time and serialize
+fn convert_to_local_rfc3339(dt: &DateTime<FixedOffset>) -> String {
+    let local_time: DateTime<Local> = dt.with_timezone(&Local);
+    local_time.to_rfc3339()
+}
+
 pub fn to_local_time<S>(dt: &DateTime<FixedOffset>, serializer: S) -> Result<S::Ok, S::Error>
 where
     S: Serializer,
 {
-    // 1. 将 DateTime<FixedOffset> 转换为系统本地时区的时间
-    let local_time: DateTime<Local> = dt.with_timezone(&Local);
-    // 2. 将转换后的时间序列化为字符串（例如 RFC3339 格式）
-    serializer.serialize_str(&local_time.to_rfc3339())
+    serializer.serialize_str(&convert_to_local_rfc3339(dt))
 }
 
 pub fn to_local_time_option<S>(
@@ -18,14 +21,10 @@ pub fn to_local_time_option<S>(
 where
     S: Serializer,
 {
-    if dt.is_none() {
-        return serializer.serialize_none();
+    match dt {
+        Some(dt) => serializer.serialize_str(&convert_to_local_rfc3339(dt)),
+        None => serializer.serialize_none(),
     }
-    let dt = dt.as_ref().unwrap();
-    // 1. 将 DateTime<FixedOffset> 转换为系统本地时区的时间
-    let local_time: DateTime<Local> = dt.with_timezone(&Local);
-    // 2. 将转换后的时间序列化为字符串（例如 RFC3339 格式）
-    serializer.serialize_str(&local_time.to_rfc3339())
 }
 
 pub mod local_time {
