@@ -39,6 +39,7 @@ pub enum Error {
     NullError(#[from] std::ffi::NulError),
     #[error("Into String Error: {0}")]
     IntoStringError(#[from] std::ffi::IntoStringError),
+    #[cfg(feature = "web")]
     #[error("BadRequest Error: {0} - {1}")]
     BadRequest(ErrorCode, String),
 }
