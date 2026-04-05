@@ -133,6 +133,7 @@ web_socket:
   host: "127.0.0.1"
   port: 9001
   max_connections: 1024
+  broadcast_channel_capacity: 128  # broadcast channel buffer size
   heartbeat_interval: "30s"  # duration string
 
 modbus_tcp:
