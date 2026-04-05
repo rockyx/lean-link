@@ -56,11 +56,6 @@ pub use jsonwebtoken;
 pub use tokio_tungstenite;
 #[cfg(feature = "web")]
 pub use tracing_actix_web;
-#[cfg(feature = "web")]
-use crate::service::websocket::{WebSocketMessage, WebSocketServer};
-#[cfg(feature = "web")]
-use tokio::sync::mpsc::Receiver;
-
 // Mqtt re-export
 #[cfg(feature = "mqtt")]
 pub use rumqttc;
@@ -152,7 +147,8 @@ impl AppStateBuilder {
                 use crate::utils::datetime::set_local_time_from_ds1307;
                 use crate::utils::i2c::path_to_i2c_bus;
 
-                let sync_time_from_rtc = self.server_config.as_ref().unwrap().sys.sync_time_from_rtc;
+                let sync_time_from_rtc =
+                    self.server_config.as_ref().unwrap().sys.sync_time_from_rtc;
                 let rtc_i2c_dev = self.server_config.as_ref().unwrap().sys.rtc_i2c_dev.clone();
                 let rtc_i2c_addr = self.server_config.as_ref().unwrap().sys.rtc_i2c_addr;
                 if sync_time_from_rtc {
