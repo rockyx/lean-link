@@ -98,6 +98,7 @@ serialport = ["tokio-serial", "dep:serialport"]
 mqtt = ["rumqttc"]
 modbus = ["tokio-modbus", "serialport"]
 socket = ["tokio-tungstenite"]
+websocket = ["tokio-tungstenite"]
 imv-camera = []
 all = [
     "postgres",

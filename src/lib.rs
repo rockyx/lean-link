@@ -56,6 +56,10 @@ pub use jsonwebtoken;
 pub use tokio_tungstenite;
 #[cfg(feature = "web")]
 pub use tracing_actix_web;
+#[cfg(feature = "web")]
+use crate::service::websocket::{WebSocketMessage, WebSocketServer};
+#[cfg(feature = "web")]
+use tokio::sync::mpsc::Receiver;
 
 // Mqtt re-export
 #[cfg(feature = "mqtt")]

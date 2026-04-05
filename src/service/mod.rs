@@ -6,7 +6,7 @@ pub mod mqtt;
 pub mod serialport;
 #[cfg(feature = "web")]
 pub mod web;
-#[cfg(feature = "web")]
+#[cfg(any(feature = "web", feature = "websocket"))]
 pub mod websocket;
 #[cfg(any(feature = "imv-camera"))]
 pub mod camera;

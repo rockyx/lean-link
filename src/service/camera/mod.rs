@@ -5,6 +5,7 @@ use crate::errors::Error;
 #[cfg(feature = "imv-camera")]
 pub mod imv_camera;
 
+#[derive(Debug)]
 pub struct CameraInfo {
     pub key: String,
     pub name: String,

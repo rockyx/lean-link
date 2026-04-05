@@ -652,6 +652,18 @@ impl Into<CameraFrame> for IMV_Frame {
 }
 
 #[cfg(test)]
+#[cfg(feature = "imv-camera")]
 mod tests {
-    
+    use crate::service::camera::{IndustryCamera, imv_camera::IMVCamera};
+
+    #[tokio::test]
+    async fn test_enumerate_camera_list() {
+        tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::DEBUG)
+            .init();
+
+        let list = IMVCamera::get_camera_list();
+        assert!(list.is_ok());
+        tracing::info!("list size: {:?}", list);
+    }
 }

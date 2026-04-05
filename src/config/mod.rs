@@ -4,6 +4,7 @@ use rumqttc::QoS;
 use serde::{Deserialize, Serialize};
 #[cfg(any(feature = "modbus", feature = "serialport"))]
 use serialport::{DataBits, FlowControl, Parity, StopBits};
+use std::fs::File;
 use std::path::{Path, PathBuf};
 #[cfg(any(feature = "modbus", feature = "serialport", feature = "web"))]
 use std::time::Duration;
@@ -362,8 +363,8 @@ pub fn load_config(app_name: &str) -> std::io::Result<ServerConfig> {
 
 #[cfg(test)]
 mod tests {
-    use crate::config::*;
     use crate::ServerConfig;
+    use crate::config::*;
 
     #[test]
     fn test_get_config_path() {
