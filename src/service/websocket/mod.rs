@@ -23,10 +23,16 @@ where
     T: Serialize,
 {
     fn into(self) -> Message {
-        let json_data = serde_json::to_value(&self).unwrap();
-        tracing::debug!("send message: {}", json_data);
-
-        Message::Text(json_data.to_string().into())
+        match serde_json::to_string(&self) {
+            Ok(json_str) => {
+                tracing::debug!("send message: {}", json_str);
+                Message::Text(json_str.into())
+            }
+            Err(e) => {
+                tracing::error!("Failed to serialize WebSocket message: {}", e);
+                Message::Text(r#"{"topic":"error","payload":"serialization failed"}"#.into())
+            }
+        }
     }
 }
 
@@ -46,11 +52,12 @@ pub struct WebSocketServer {
 
 impl WebSocketServer {
     pub fn new(websocket_config: WebSocketConfig, sys_config: Sys) -> Self {
+        let capacity = websocket_config.broadcast_channel_capacity;
         WebSocketServer {
             writer_map: Arc::new(DashMap::new()),
             websocket_config,
             sys_config,
-            broadcast_sender: broadcast::channel(16).0,
+            broadcast_sender: broadcast::channel(capacity).0,
         }
     }
 
@@ -131,12 +138,13 @@ async fn handle_websocket_message(
             }
             Message::Text(msg) => {
                 let value = serde_json::from_str::<serde_json::Value>(&msg);
-                if value.is_err() {
-                    tracing::error!("Invalid JSON message: {}", msg);
-                    return true;
-                }
-
-                let value = value.unwrap();
+                let value = match value {
+                    Ok(v) => v,
+                    Err(e) => {
+                        tracing::error!("Invalid JSON message: {}. Error: {}", msg, e);
+                        return true;
+                    }
+                };
 
                 if let Some(topic) = value.get("topic").and_then(|v| v.as_str()) {
                     if topic == "syncSysTime" && sys_config.sync_time_from_client {
@@ -179,16 +187,22 @@ async fn handle_websocket_message(
                                                     bus_result
                                                 );
                                             } else {
-                                                let bus = bus_result.unwrap();
-                                                let output =
-                                                crate::utils::datetime::set_ds1307_from_local_time(
-                                                    bus,
-                                                    rtc_i2c_addr,
-                                                );
-                                                tracing::info!(
-                                                    "syncSysTime command output: {:?}",
-                                                    output
-                                                );
+                                                match bus_result {
+                                                    Ok(bus) => {
+                                                        let output =
+                                                        crate::utils::datetime::set_ds1307_from_local_time(
+                                                            bus,
+                                                            rtc_i2c_addr,
+                                                        );
+                                                        tracing::info!(
+                                                            "syncSysTime command output: {:?}",
+                                                            output
+                                                        );
+                                                    }
+                                                    Err(e) => {
+                                                        tracing::error!("Failed to get I2C bus: {}", e);
+                                                    }
+                                                }
                                             }
                                         }
                                     }
@@ -247,23 +261,23 @@ async fn handle_connection(
     sys_config: Sys,
     broadcast_sender: broadcast::Sender<Message>,
 ) {
-    let ws_stream = accept_async(raw_stream).await;
-    if ws_stream.is_err() {
-        tracing::error!(
-            "Error accepting WebSocket connection: {}",
-            ws_stream.err().unwrap()
-        );
-        return;
-    }
+    let ws_stream = match accept_async(raw_stream).await {
+        Ok(stream) => stream,
+        Err(e) => {
+            tracing::error!("Error accepting WebSocket connection: {}", e);
+            return;
+        }
+    };
 
-    let ws_stream = ws_stream.unwrap();
+    let peer_addr = match ws_stream.get_ref().peer_addr() {
+        Ok(addr) => addr.to_string(),
+        Err(e) => {
+            tracing::error!("Failed to get peer address: {}", e);
+            return;
+        }
+    };
 
-    let peer_addr = ws_stream.get_ref().peer_addr().unwrap().to_string();
-
-    tracing::info!(
-        "New WebSocket connection: {}",
-        ws_stream.get_ref().peer_addr().unwrap()
-    );
+    tracing::info!("New WebSocket connection: {}", peer_addr);
 
     let (writer_send, mut writer_recv) = mpsc::channel::<Message>(100);
     {
