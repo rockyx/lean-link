@@ -1,11 +1,11 @@
 use tokio::sync::mpsc;
-
+use serde::{Deserialize, Serialize};
 use crate::errors::Error;
 
 #[cfg(feature = "imv-camera")]
 pub mod imv_camera;
 
-#[derive(Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CameraInfo {
     pub key: String,
     pub name: String,
