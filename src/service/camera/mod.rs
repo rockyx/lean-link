@@ -6,6 +6,7 @@ use crate::errors::Error;
 pub mod imv_camera;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CameraInfo {
     pub key: String,
     pub name: String,
