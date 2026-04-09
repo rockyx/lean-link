@@ -99,7 +99,7 @@ mqtt = ["rumqttc"]
 modbus = ["tokio-modbus", "serialport"]
 socket = ["tokio-tungstenite"]
 websocket = ["tokio-tungstenite"]
-imv-camera = []
+industry-camera = []
 all = [
     "postgres",
     "web",
@@ -107,5 +107,5 @@ all = [
     "mqtt",
     "modbus",
     "socket",
-    "imv-camera",
+    "industry-camera",
 ]

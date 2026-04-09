@@ -1,20 +1,37 @@
-use tokio::sync::mpsc;
-use serde::{Deserialize, Serialize};
-use crate::errors::Error;
+use std::{fmt::Display, time::Duration};
 
-#[cfg(feature = "imv-camera")]
-pub mod imv_camera;
+use serde::{Deserialize, Serialize};
+use tokio::sync::mpsc;
+
+mod inner;
+pub mod manager;
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub enum CameraSupplier {
+    IMV,
+}
+
+impl Display for CameraSupplier {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CameraSupplier::IMV => write!(f, "IMV")
+        }
+    }
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CameraInfo {
     pub key: String,
-    pub name: String,
+    pub device_user_id: String,
     pub serial_number: String,
     pub vendor: String,
     pub model: String,
     pub manufacture_info: String,
     pub device_version: String,
+    pub ip_address: Option<String>,
+    pub mac_address: Option<String>,
+    pub camera_supplier: CameraSupplier,
 }
 
 #[derive(Clone, PartialEq, Eq, Copy)]
@@ -23,7 +40,7 @@ pub enum GrabMode {
     SingleFrame,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PixelFormat {
     Undefined,
     Mono1p,
@@ -102,6 +119,29 @@ pub enum PixelFormat {
     Mono1e,
 }
 
+impl PixelFormat {
+    /// Get number of channels
+    pub fn channels(&self) -> u32 {
+        match self {
+            PixelFormat::Mono8 | PixelFormat::Mono16 => 1,
+            PixelFormat::RGB8 | PixelFormat::BGR8 => 3,
+            PixelFormat::RGBA8 | PixelFormat::BGRA8 => 4,
+            _ => 1,
+        }
+    }
+
+    /// Get bytes per pixel
+    pub fn bytes_per_pixel(&self) -> u32 {
+        match self {
+            PixelFormat::Mono8 => 1,
+            PixelFormat::Mono16 => 2,
+            PixelFormat::RGB8 | PixelFormat::BGR8 => 3,
+            PixelFormat::RGBA8 | PixelFormat::BGRA8 => 4,
+            _ => 1,
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 pub struct FrameSize {
     pub width: usize,
@@ -124,17 +164,128 @@ pub struct CameraFrame {
 }
 
 pub trait IndustryCamera {
-    fn get_camera_list() -> Result<Vec<CameraInfo>, Error>;
-    fn open(&self) -> Result<(), Error>;
+    fn open(&self) -> Result<(), CameraError>;
     fn is_opened(&self) -> bool;
     fn is_grabbing(&self) -> bool;
-    fn stop_grab(&self) -> Result<(), Error>;
-    fn start_grab(&mut self) -> Result<(), Error>;
-    fn close(&self) -> Result<(), Error>;
-    fn frame_size(&self) -> Result<FrameSize, Error>;
-    fn trigger_one_frame(&self) -> Result<(), Error>;
+    fn stop_grab(&self) -> Result<(), CameraError>;
+    fn start_grab(&mut self) -> Result<(), CameraError>;
+    fn close(&self) -> Result<(), CameraError>;
+    fn frame_size(&self) -> Result<FrameSize, CameraError>;
+    fn trigger_one_frame(&self) -> Result<(), CameraError>;
     fn create_frame_channel(&mut self) -> mpsc::Receiver<CameraFrame>;
     fn set_grab_mode(&mut self, grab_mode: GrabMode);
     fn set_exposure_auto(&mut self, auto: bool);
     fn set_exposure_time(&mut self, time: std::time::Duration);
 }
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CameraConfig {
+    pub id: Option<uuid::Uuid>,
+    pub device_user_id: Option<String>,
+    pub key: Option<String>,
+    pub serial_number: Option<String>,
+    pub vendor: Option<String>,
+    pub model: Option<String>,
+    pub manufacture_info: Option<String>,
+    pub device_version: Option<String>,
+    pub exposure_time_ms: f64,
+    pub exposure_auto: bool,
+    pub ip_address: Option<String>,
+    pub camera_supplier: CameraSupplier,
+}
+
+impl CameraConfig {
+    pub fn exposure_duration(&self) -> Duration {
+        Duration::from_micros((self.exposure_time_ms * 1000.0) as u64)
+    }
+
+    pub fn name(&self) -> String {
+        if let Some(ref device_user_id) = self.device_user_id {
+            return device_user_id.clone();
+        } else if let Some(ref key) = self.key {
+            return key.clone();
+        } else if let Some(ref serial_number) = self.serial_number {
+            return serial_number.clone();
+        } else {
+            return "".into()
+        }
+    }
+
+    pub fn gen_id(&mut self) {
+        self.id = Some(uuid::Uuid::new_v4());
+    }
+}
+
+/// Camera error types
+#[derive(Debug, Clone)]
+pub enum CameraError {
+    /// Failed to enumerate cameras
+    EnumerationError(String),
+
+    /// Invalid camera index
+    InvalidIndex(String),
+
+    /// Camera not found
+    CameraNotFound(String),
+
+    /// Camera not opened
+    NotOpened(String),
+
+    /// Camera not grabbing
+    NotGrabbing(String),
+
+    /// Failed to open camera
+    OpenError(String),
+
+    /// Failed to close camera
+    CloseError(String),
+
+    /// Failed to start/stop grabbing
+    GrabError(String),
+
+    /// Failed to trigger frame
+    TriggerError(String),
+
+    /// Frame error
+    FrameError(String),
+
+    /// Camera handle error
+    CameraHandler(String),
+
+    /// Invalid key or name
+    InvalidKeyName(String),
+
+    InvalidDeviceUserId(String),
+
+    InvalidIpAddress(String),
+
+    Config(String),
+
+    AddCamera(String)
+}
+
+impl std::fmt::Display for CameraError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CameraError::EnumerationError(msg) => write!(f, "相机枚举错误: {}", msg),
+            CameraError::InvalidIndex(msg) => write!(f, "无效相机索引: {}", msg),
+            CameraError::CameraNotFound(idx) => write!(f, "相机 {} 不存在", idx),
+            CameraError::NotOpened(idx) => write!(f, "相机 {} 没打开", idx),
+            CameraError::NotGrabbing(idx) => write!(f, "相机 {} 没抓取", idx),
+            CameraError::OpenError(msg) => write!(f, "打开相机错误: {}", msg),
+            CameraError::CloseError(msg) => write!(f, "关闭相机错误: {}", msg),
+            CameraError::GrabError(msg) => write!(f, "抓取错误: {}", msg),
+            CameraError::TriggerError(msg) => write!(f, "触发错误: {}", msg),
+            CameraError::FrameError(msg) => write!(f, "帧错误: {}", msg),
+            CameraError::CameraHandler(msg) => write!(f, "相机句柄错误：{}", msg),
+            CameraError::InvalidKeyName(msg) => write!(f, "相机键值错误：{}", msg),
+            CameraError::InvalidDeviceUserId(msg) => write!(f, "相机设备用户ID错误：{}", msg),
+            CameraError::InvalidIpAddress(msg) => write!(f, "相机IP地址错误：{}", msg),
+            CameraError::Config(msg) => write!(f, "相机参数配置错误：{}", msg),
+            CameraError::AddCamera(msg) => write!(f, "添加相机错误：{}", msg),
+        }
+    }
+}
+
+impl std::error::Error for CameraError {}

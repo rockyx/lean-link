@@ -32,9 +32,9 @@ pub enum Error {
     Tsink(#[from] tsink::TsinkError),
     #[error("Configure Error")]
     Configure,
-    #[cfg(any(feature = "imv-camera"))]
+    #[cfg(any(feature = "industry-camera"))]
     #[error("Camera Error Code: {0}")]
-    Camera(i32),
+    Camera(#[from] crate::service::camera::CameraError),
     #[error("Null Error: {0}")]
     NullError(#[from] std::ffi::NulError),
     #[error("Into String Error: {0}")]
@@ -80,9 +80,19 @@ impl actix_web::error::ResponseError for Error {
                 )
             }
             Error::Io(e) => {
-                actix_web::HttpResponse::build(actix_web::http::StatusCode::INTERNAL_SERVER_ERROR).json(
-                    WebResponse::<()>::with_error_code_and_message(&ErrorCode::InternalError, e.to_string()),
-                )
+                actix_web::HttpResponse::build(actix_web::http::StatusCode::INTERNAL_SERVER_ERROR)
+                    .json(WebResponse::<()>::with_error_code_and_message(
+                        &ErrorCode::InternalError,
+                        e.to_string(),
+                    ))
+            }
+            #[cfg(feature = "industry-camera")]
+            Error::Camera(e) => {
+                actix_web::HttpResponse::build(actix_web::http::StatusCode::INTERNAL_SERVER_ERROR)
+                    .json(WebResponse::<()>::with_error_code_and_message(
+                        &ErrorCode::InternalError,
+                        e.to_string(),
+                    ))
             }
             _ => actix_web::HttpResponse::new(actix_web::http::StatusCode::INTERNAL_SERVER_ERROR),
         }

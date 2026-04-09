@@ -9,10 +9,10 @@ use std::ptr::null_mut;
 use bytes::BufMut;
 use tokio::sync::mpsc;
 
-use crate::errors::Error;
 use crate::ffi::imv::*;
 use crate::service::camera::{
-    CameraFrame, CameraInfo, FrameSize, GrabMode, IndustryCamera, PixelFormat,
+    CameraConfig, CameraError, CameraFrame, CameraInfo, CameraSupplier, FrameSize, GrabMode,
+    IndustryCamera, PixelFormat,
 };
 
 pub struct IMVCameraBuilder {
@@ -34,8 +34,52 @@ impl IMVCameraBuilder {
         }
     }
 
-    pub fn build(&self) -> Result<IMVCamera, Error> {
-        IMVCamera::get_camera_list()?;
+    pub fn new_with_config(config: &CameraConfig) -> Self {
+        let builder = Self::new();
+        if let Some(ref ip_address) = config.ip_address {
+            return builder
+                .with_ip_address(ip_address)
+                .with_mode(crate::ffi::imv::_IMV_ECreateHandleMode_modeByIPAddress);
+        } else if let Some(ref device_user_id) = config.device_user_id {
+            return builder
+                .with_device_user_id(device_user_id)
+                .with_mode(crate::ffi::imv::_IMV_ECreateHandleMode_modeByDeviceUserID);
+        } else if let Some(ref key) = config.key {
+            return builder
+                .with_camera_key(key)
+                .with_mode(crate::ffi::imv::_IMV_ECreateHandleMode_modeByCameraKey);
+        }
+
+        return builder
+    }
+
+    pub fn with_mode(mut self, mode: IMV_ECreateHandleMode) -> Self {
+        self.mode = mode;
+        self
+    }
+
+    pub fn with_index(mut self, index: u32) -> Self {
+        self.index = index;
+        self
+    }
+
+    pub fn with_camera_key(mut self, camera_key: &str) -> Self {
+        self.camera_key = camera_key.into();
+        self
+    }
+
+    pub fn with_device_user_id(mut self, device_user_id: &str) -> Self {
+        self.device_user_id = device_user_id.into();
+        self
+    }
+
+    pub fn with_ip_address(mut self, ip_address: &str) -> Self {
+        self.ip_address = ip_address.into();
+        self
+    }
+
+    pub fn build(&self) -> Result<IMVCamera, CameraError> {
+        get_camera_list()?;
         let mut camera = IMVCamera {
             handle: null_mut(),
             grab_mode: GrabMode::Continuous,
@@ -49,48 +93,125 @@ impl IMVCameraBuilder {
                 let ret =
                     IMV_CreateHandle(&mut camera.handle, self.mode, self.index as *mut c_void);
                 if ret != IMV_OK {
-                    return Err(Error::Camera(ret));
+                    return Err(CameraError::CameraHandler(format!("{:?}", ret)));
                 }
             },
             _IMV_ECreateHandleMode_modeByCameraKey => {
-                let c_string = CString::new(self.camera_key.as_str())?;
+                let c_string = CString::new(self.camera_key.as_str())
+                    .map_err(|e| CameraError::InvalidKeyName(format!("{:?}", e)))?;
                 let ptr_c_void = c_string.as_ptr() as *mut c_void;
 
                 unsafe {
                     let ret = IMV_CreateHandle(&mut camera.handle, self.mode, ptr_c_void);
                     if ret != IMV_OK {
-                        return Err(Error::Camera(ret));
+                        return Err(CameraError::CameraHandler(format!("{:?}", ret)).into());
                     }
                 }
             }
             _IMV_ECreateHandleMode_modeByDeviceUserID => {
-                let c_string = CString::new(self.device_user_id.as_str())?;
+                let c_string = CString::new(self.device_user_id.as_str())
+                    .map_err(|e| CameraError::InvalidDeviceUserId(format!("{:?}", e)))?;
                 let ptr_c_void = c_string.as_ptr() as *mut c_void;
 
                 unsafe {
                     let ret = IMV_CreateHandle(&mut camera.handle, self.mode, ptr_c_void);
                     if ret != IMV_OK {
-                        return Err(Error::Camera(ret));
+                        return Err(CameraError::CameraHandler(format!("{:?}", ret)).into());
                     }
                 }
             }
             _IMV_ECreateHandleMode_modeByIPAddress => {
-                let c_string = CString::new(self.ip_address.as_str())?;
+                let c_string = CString::new(self.ip_address.as_str())
+                    .map_err(|e| CameraError::InvalidIpAddress(format!("{:?}", e)))?;
                 let ptr_c_void = c_string.as_ptr() as *mut c_void;
 
                 unsafe {
                     let ret = IMV_CreateHandle(&mut camera.handle, self.mode, ptr_c_void);
                     if ret != IMV_OK {
-                        return Err(Error::Camera(ret));
+                        return Err(CameraError::CameraHandler(format!("{:?}", ret)).into());
                     }
                 }
             }
             _ => {
-                return Err(Error::Camera(IMV_ERROR));
+                return Err(CameraError::CameraHandler(format!("{:?}", IMV_ERROR)).into());
             }
         }
         Ok(camera)
     }
+}
+
+pub fn get_camera_list() -> Result<Vec<CameraInfo>, CameraError> {
+    let mut camera_list = Vec::new();
+
+    unsafe {
+        let mut device_info_list = IMV_DeviceList::default();
+        let ret = IMV_EnumDevices(
+            &mut device_info_list,
+            _IMV_EInterfaceType_interfaceTypeAll as u32,
+        );
+
+        if ret != IMV_OK {
+            return Err(CameraError::EnumerationError(format!("{:?}", ret)));
+        }
+
+        for i in 0..device_info_list.nDevNum {
+            let device_info = *device_info_list.pDevInfo.add(i as usize);
+            let mut camera_info = CameraInfo {
+                key: CStr::from_ptr(device_info.cameraKey.as_ptr())
+                    .to_string_lossy()
+                    .into_owned(),
+                device_user_id: CStr::from_ptr(device_info.cameraName.as_ptr())
+                    .to_string_lossy()
+                    .into_owned(),
+                serial_number: CStr::from_ptr(device_info.serialNumber.as_ptr())
+                    .to_string_lossy()
+                    .into_owned(),
+                vendor: CStr::from_ptr(device_info.vendorName.as_ptr())
+                    .to_string_lossy()
+                    .into_owned(),
+                model: CStr::from_ptr(device_info.modelName.as_ptr())
+                    .to_string_lossy()
+                    .into_owned(),
+                manufacture_info: CStr::from_ptr(device_info.manufactureInfo.as_ptr())
+                    .to_string_lossy()
+                    .into_owned(),
+                device_version: CStr::from_ptr(device_info.deviceVersion.as_ptr())
+                    .to_string_lossy()
+                    .into_owned(),
+                ip_address: None,
+                mac_address: None,
+                camera_supplier: CameraSupplier::IMV,
+            };
+
+            if device_info.nCameraType == _IMV_ECameraType_typeGigeCamera {
+                camera_info.ip_address = Some(
+                    CStr::from_ptr(
+                        device_info
+                            .InterfaceInfo
+                            .gigeInterfaceInfo
+                            .ipAddress
+                            .as_ptr(),
+                    )
+                    .to_string_lossy()
+                    .into_owned(),
+                );
+                camera_info.mac_address = Some(
+                    CStr::from_ptr(
+                        device_info
+                            .InterfaceInfo
+                            .gigeInterfaceInfo
+                            .macAddress
+                            .as_ptr(),
+                    )
+                    .to_string_lossy()
+                    .into_owned(),
+                );
+            }
+            camera_list.push(camera_info);
+        }
+    }
+
+    Ok(camera_list)
 }
 
 #[repr(C)]
@@ -103,52 +224,7 @@ pub struct IMVCamera {
 }
 
 impl IndustryCamera for IMVCamera {
-    fn get_camera_list() -> Result<Vec<CameraInfo>, Error> {
-        let mut camera_list = Vec::new();
-
-        unsafe {
-            let mut device_info_list = IMV_DeviceList::default();
-            let ret = IMV_EnumDevices(
-                &mut device_info_list,
-                _IMV_EInterfaceType_interfaceTypeAll as u32,
-            );
-
-            if ret != IMV_OK {
-                return Err(Error::Camera(ret));
-            }
-
-            for i in 0..device_info_list.nDevNum {
-                let device_info = *device_info_list.pDevInfo.add(i as usize);
-                camera_list.push(CameraInfo {
-                    key: CStr::from_ptr(device_info.cameraKey.as_ptr())
-                        .to_string_lossy()
-                        .into_owned(),
-                    name: CStr::from_ptr(device_info.cameraName.as_ptr())
-                        .to_string_lossy()
-                        .into_owned(),
-                    serial_number: CStr::from_ptr(device_info.serialNumber.as_ptr())
-                        .to_string_lossy()
-                        .into_owned(),
-                    vendor: CStr::from_ptr(device_info.vendorName.as_ptr())
-                        .to_string_lossy()
-                        .into_owned(),
-                    model: CStr::from_ptr(device_info.modelName.as_ptr())
-                        .to_string_lossy()
-                        .into_owned(),
-                    manufacture_info: CStr::from_ptr(device_info.manufactureInfo.as_ptr())
-                        .to_string_lossy()
-                        .into_owned(),
-                    device_version: CStr::from_ptr(device_info.deviceVersion.as_ptr())
-                        .to_string_lossy()
-                        .into_owned(),
-                });
-            }
-        }
-
-        Ok(camera_list)
-    }
-
-    fn open(&self) -> Result<(), Error> {
+    fn open(&self) -> Result<(), CameraError> {
         if self.is_opened() {
             return Ok(());
         }
@@ -156,7 +232,7 @@ impl IndustryCamera for IMVCamera {
         unsafe {
             let ret = IMV_Open(self.handle);
             if ret != IMV_OK {
-                return Err(Error::Camera(ret));
+                return Err(CameraError::OpenError(format!("{:?}", ret)));
             }
         }
         Ok(())
@@ -191,7 +267,7 @@ impl IndustryCamera for IMVCamera {
         true
     }
 
-    fn stop_grab(&self) -> Result<(), Error> {
+    fn stop_grab(&self) -> Result<(), CameraError> {
         if !self.is_opened() {
             return Ok(());
         }
@@ -206,7 +282,7 @@ impl IndustryCamera for IMVCamera {
         unsafe {
             let ret = IMV_StopGrabbing(self.handle);
             if ret != IMV_OK {
-                return Err(Error::Camera(ret));
+                return Err(CameraError::GrabError(format!("{:?}", ret)));
             }
 
             let _ = IMV_ClearFrameBuffer(self.handle);
@@ -214,9 +290,9 @@ impl IndustryCamera for IMVCamera {
         Ok(())
     }
 
-    fn start_grab(&mut self) -> Result<(), Error> {
+    fn start_grab(&mut self) -> Result<(), CameraError> {
         if !self.is_opened() {
-            return Err(Error::Camera(IMV_ERROR));
+            return Err(CameraError::NotOpened(format!("{:?}", IMV_ERROR)));
         }
 
         if self.is_grabbing() {
@@ -236,7 +312,7 @@ impl IndustryCamera for IMVCamera {
                     self as *mut Self as *mut c_void,
                 );
                 if ret != IMV_OK {
-                    return Err(Error::Camera(ret));
+                    return Err(CameraError::GrabError(format!("{:?}", ret)));
                 }
             }
         }
@@ -244,14 +320,14 @@ impl IndustryCamera for IMVCamera {
         unsafe {
             let ret = IMV_StartGrabbing(self.handle);
             if ret != IMV_OK {
-                return Err(Error::Camera(ret));
+                return Err(CameraError::GrabError(format!("{:?}", ret)));
             }
         }
 
         Ok(())
     }
 
-    fn close(&self) -> Result<(), Error> {
+    fn close(&self) -> Result<(), CameraError> {
         if !self.is_opened() {
             return Ok(());
         }
@@ -259,26 +335,26 @@ impl IndustryCamera for IMVCamera {
         unsafe {
             let ret = IMV_Close(self.handle);
             if ret != IMV_OK {
-                return Err(Error::Camera(ret));
+                return Err(CameraError::CloseError(format!("{:?}", ret)));
             }
         }
 
         Ok(())
     }
 
-    fn frame_size(&self) -> Result<FrameSize, Error> {
+    fn frame_size(&self) -> Result<FrameSize, CameraError> {
         let width = self.get_int_feature_value("Width")? as usize;
         let height = self.get_int_feature_value("Height")? as usize;
 
         Ok(FrameSize { width, height })
     }
 
-    fn trigger_one_frame(&self) -> Result<(), Error> {
+    fn trigger_one_frame(&self) -> Result<(), CameraError> {
         unsafe {
             // Clear frame buffer
             let ret = IMV_ClearFrameBuffer(self.handle);
             if ret != IMV_OK {
-                return Err(Error::Camera(ret));
+                return Err(CameraError::FrameError(format!("{:?}", ret)));
             }
         }
 
@@ -328,21 +404,25 @@ impl IndustryCamera for IMVCamera {
 }
 
 impl IMVCamera {
-    fn set_enum_feature_symbol(&self, feature_name: &str, enum_symbol: &str) -> Result<(), Error> {
+    fn set_enum_feature_symbol(
+        &self,
+        feature_name: &str,
+        enum_symbol: &str,
+    ) -> Result<(), CameraError> {
         let feature_name_ptr = feature_name.as_ptr() as *const i8;
         let enum_symbol_ptr = enum_symbol.as_ptr() as *const i8;
 
         unsafe {
             let ret = IMV_SetEnumFeatureSymbol(self.handle, feature_name_ptr, enum_symbol_ptr);
             if ret != IMV_OK {
-                return Err(Error::Camera(ret));
+                return Err(CameraError::Config(format!("{:?}", ret)));
             }
         }
 
         Ok(())
     }
 
-    fn sync_grab_mode(&self) -> Result<(), Error> {
+    fn sync_grab_mode(&self) -> Result<(), CameraError> {
         // Set trigger selector to FrameStart
         self.set_enum_feature_symbol("TriggerSelector", "FrameStart")?;
 
@@ -361,19 +441,23 @@ impl IMVCamera {
         Ok(())
     }
 
-    fn set_enum_feature_value(&self, feature_name: &str, enum_value: u64) -> Result<(), Error> {
+    fn set_enum_feature_value(
+        &self,
+        feature_name: &str,
+        enum_value: u64,
+    ) -> Result<(), CameraError> {
         unsafe {
             let feature_name_ptr = feature_name.as_ptr() as *const i8;
             let ret = IMV_SetEnumFeatureValue(self.handle, feature_name_ptr, enum_value);
             if ret != IMV_OK {
-                return Err(Error::Camera(ret));
+                return Err(CameraError::Config(format!("{:?}", ret)));
             }
         }
 
         Ok(())
     }
 
-    fn sync_exposure_auto(&self) -> Result<(), Error> {
+    fn sync_exposure_auto(&self) -> Result<(), CameraError> {
         if self.exposure_auto {
             self.set_enum_feature_value("ExposureAuto", 2)?;
         } else {
@@ -382,58 +466,62 @@ impl IMVCamera {
         Ok(())
     }
 
-    fn get_double_feature_value(&self, feature_name: &str) -> Result<f64, Error> {
+    fn get_double_feature_value(&self, feature_name: &str) -> Result<f64, CameraError> {
         unsafe {
             let feature_name_ptr = feature_name.as_ptr() as *const i8;
             let mut value = 0.0;
             let ret = IMV_GetDoubleFeatureValue(self.handle, feature_name_ptr, &mut value);
             if ret != IMV_OK {
-                return Err(Error::Camera(ret));
+                return Err(CameraError::Config(format!("{:?}", ret)));
             }
 
             Ok(value)
         }
     }
 
-    fn get_double_feature_min(&self, feature_name: &str) -> Result<f64, Error> {
+    fn get_double_feature_min(&self, feature_name: &str) -> Result<f64, CameraError> {
         unsafe {
             let feature_name_ptr = feature_name.as_ptr() as *const i8;
             let mut value = 0.0;
             let ret = IMV_GetDoubleFeatureMin(self.handle, feature_name_ptr, &mut value);
             if ret != IMV_OK {
-                return Err(Error::Camera(ret));
+                return Err(CameraError::Config(format!("{:?}", ret)));
             }
 
             Ok(value)
         }
     }
 
-    fn get_double_feature_max(&self, feature_name: &str) -> Result<f64, Error> {
+    fn get_double_feature_max(&self, feature_name: &str) -> Result<f64, CameraError> {
         unsafe {
             let feature_name_ptr = feature_name.as_ptr() as *const i8;
             let mut value = 0.0;
             let ret = IMV_GetDoubleFeatureMax(self.handle, feature_name_ptr, &mut value);
             if ret != IMV_OK {
-                return Err(Error::Camera(ret));
+                return Err(CameraError::Config(format!("{:?}", ret)));
             }
 
             Ok(value)
         }
     }
 
-    fn set_double_feature_value(&self, feature_name: &str, double_value: f64) -> Result<(), Error> {
+    fn set_double_feature_value(
+        &self,
+        feature_name: &str,
+        double_value: f64,
+    ) -> Result<(), CameraError> {
         unsafe {
             let feature_name_ptr = feature_name.as_ptr() as *const i8;
             let ret = IMV_SetDoubleFeatureValue(self.handle, feature_name_ptr, double_value);
             if ret != IMV_OK {
-                return Err(Error::Camera(ret));
+                return Err(CameraError::Config(format!("{:?}", ret)));
             }
 
             Ok(())
         }
     }
 
-    fn sync_exposure_time(&self) -> Result<(), Error> {
+    fn sync_exposure_time(&self) -> Result<(), CameraError> {
         let mut et = self.get_double_feature_value("ExposureTime")?;
         let exposure_min_value = self.get_double_feature_min("ExposureTime")?;
         let exposure_max_value = self.get_double_feature_max("ExposureTime")?;
@@ -444,7 +532,7 @@ impl IMVCamera {
             exposure_min_value,
             exposure_max_value
         );
-        
+
         et = self.exposure_time.as_millis() as f64;
         if et < exposure_min_value {
             et = exposure_min_value;
@@ -469,25 +557,25 @@ impl IMVCamera {
         });
     }
 
-    fn get_int_feature_value(&self, feature_name: &str) -> Result<i64, Error> {
+    fn get_int_feature_value(&self, feature_name: &str) -> Result<i64, CameraError> {
         unsafe {
             let feature_name_ptr = feature_name.as_ptr() as *const i8;
             let mut value: i64 = 0;
             let ret = IMV_GetIntFeatureValue(self.handle, feature_name_ptr, &mut value);
             if ret != IMV_OK {
-                return Err(Error::Camera(ret));
+                return Err(CameraError::Config(format!("{:?}", ret)));
             }
 
             Ok(value)
         }
     }
 
-    fn execute_command_feature(&self, feature_name: &str) -> Result<(), Error> {
+    fn execute_command_feature(&self, feature_name: &str) -> Result<(), CameraError> {
         unsafe {
             let feature_name_ptr = feature_name.as_ptr() as *const i8;
             let ret = IMV_ExecuteCommandFeature(self.handle, feature_name_ptr);
             if ret != IMV_OK {
-                return Err(Error::Camera(ret));
+                return Err(CameraError::Config(format!("{:?}", ret)));
             }
 
             Ok(())
@@ -652,7 +740,7 @@ impl Into<CameraFrame> for IMV_Frame {
 }
 
 #[cfg(test)]
-#[cfg(feature = "imv-camera")]
+#[cfg(feature = "industry-camera")]
 mod tests {
     use crate::service::camera::{IndustryCamera, imv_camera::IMVCamera};
 
