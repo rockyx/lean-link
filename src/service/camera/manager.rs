@@ -3,8 +3,10 @@ use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock, mpsc};
 
 use crate::service::camera::{
-    CameraConfig, CameraError, CameraFrame, CameraInfo, CameraSupplier, FrameSize, GrabMode,
-    IndustryCamera, inner::imv_camera,
+    self, CameraConfig, CameraError, CameraFrame, CameraInfo, CameraSupplier, FrameSize, GrabMode,
+    IndustryCamera,
+    inner::imv_camera,
+    stream::{ActiveStream, CameraStreamConfig},
 };
 
 fn create_camera(config: &CameraConfig) -> Result<Box<dyn IndustryCamera>, CameraError> {
@@ -17,7 +19,7 @@ fn create_camera(config: &CameraConfig) -> Result<Box<dyn IndustryCamera>, Camer
 }
 
 pub struct ManagedCamera {
-    camera: Option<Box<dyn IndustryCamera>>,
+    camera: Arc<Mutex<Option<Box<dyn IndustryCamera>>>>,
     config: CameraConfig,
     is_grabbing: bool,
 }
@@ -25,7 +27,7 @@ pub struct ManagedCamera {
 impl ManagedCamera {
     pub fn new(config: CameraConfig) -> Self {
         Self {
-            camera: None,
+            camera: Arc::new(Mutex::new(None)),
             config,
             is_grabbing: false,
         }
@@ -33,8 +35,10 @@ impl ManagedCamera {
 }
 
 pub struct CameraManager {
-    cameras: DashMap<uuid::Uuid, Arc<Mutex<ManagedCamera>>>,
+    cameras: DashMap<uuid::Uuid, ManagedCamera>,
     available_cameras: Arc<RwLock<Vec<CameraInfo>>>,
+    streams: DashMap<uuid::Uuid, Arc<Mutex<ActiveStream>>>,
+    stream_configs: DashMap<uuid::Uuid, CameraStreamConfig>,
 }
 
 impl CameraManager {
@@ -42,6 +46,8 @@ impl CameraManager {
         Self {
             cameras: DashMap::new(),
             available_cameras: Arc::new(RwLock::new(Vec::new())),
+            streams: DashMap::new(),
+            stream_configs: DashMap::new(),
         }
     }
 
@@ -96,7 +102,7 @@ impl CameraManager {
         }
         let managed = ManagedCamera::new(config.clone());
 
-        self.cameras.insert(id, Arc::new(Mutex::new(managed)));
+        self.cameras.insert(id, managed);
 
         tracing::info!(
             "Added camera {} (config device user id: {}, serial number: {})",
@@ -109,14 +115,14 @@ impl CameraManager {
     }
 
     pub async fn open_camera(&self, id: &uuid::Uuid) -> Result<(), CameraError> {
-        let camera_arc = self
+        let managed = self
             .cameras
             .get(id)
             .ok_or_else(|| CameraError::CameraNotFound(id.to_string()))?;
 
-        let mut managed = camera_arc.lock().await;
+        let mut managed_camera = managed.camera.lock().await;
 
-        if let Some(camera) = &managed.camera {
+        if let Some(camera) = managed.camera.lock().await.as_ref() {
             if camera.is_opened() {
                 tracing::warn!(
                     "Camera {} (id {}) is already opened",
@@ -128,7 +134,7 @@ impl CameraManager {
             let cam = create_camera(&managed.config)?;
             cam.open()?;
 
-            managed.camera = Some(cam);
+            *managed_camera = Some(cam);
 
             tracing::info!("Opened camera {} (id {})", managed.config.name(), id);
         } else {
@@ -152,30 +158,28 @@ impl CameraManager {
         id: &uuid::Uuid,
         mode: GrabMode,
     ) -> Result<mpsc::Receiver<CameraFrame>, CameraError> {
-        let camera_arc = self
+        let mut managed = self
             .cameras
-            .get(id)
+            .get_mut(id)
             .ok_or_else(|| CameraError::CameraNotFound(id.to_string()))?;
 
-        let mut managed = camera_arc.lock().await;
+        let frame_rx = if let Some(camera) = managed.camera.lock().await.as_mut() {
+            // Set grab mode
+            camera.set_grab_mode(mode);
 
-        let camera = managed
-            .camera
-            .as_mut()
-            .ok_or_else(|| CameraError::NotOpened(id.to_string()))?;
+            if !camera.is_opened() {
+                return Err(CameraError::NotOpened(id.to_string()));
+            }
+            // Create frame channel
+            let frame_rx = camera.create_frame_channel();
 
-        if !camera.is_opened() {
+            // Start grabbing
+            camera.start_grab()?;
+
+            frame_rx
+        } else {
             return Err(CameraError::NotOpened(id.to_string()));
-        }
-
-        // Set grab mode
-        camera.set_grab_mode(mode);
-
-        // Create frame channel
-        let frame_rx = camera.create_frame_channel();
-
-        // Start grabbing
-        camera.start_grab()?;
+        };
 
         managed.is_grabbing = true;
 
@@ -195,15 +199,13 @@ impl CameraManager {
     }
 
     pub async fn stop_grabbing(&self, id: &uuid::Uuid) -> Result<(), CameraError> {
-        let camera_arc = self
+        let mut managed = self
             .cameras
-            .get(id)
+            .get_mut(id)
             .ok_or_else(|| CameraError::CameraNotFound(id.to_string()))?;
 
-        let mut managed = camera_arc.lock().await;
-
         if managed.is_grabbing {
-            if let Some(camera) = managed.camera.as_mut() {
+            if let Some(camera) = managed.camera.lock().await.as_mut() {
                 camera.stop_grab()?;
             }
             managed.is_grabbing = false;
@@ -218,18 +220,16 @@ impl CameraManager {
     }
 
     pub async fn trigger_frame(&self, id: &uuid::Uuid) -> Result<(), CameraError> {
-        let camera_arc = self
+        let managed = self
             .cameras
             .get(id)
             .ok_or_else(|| CameraError::CameraNotFound(id.to_string()))?;
-
-        let managed = camera_arc.lock().await;
 
         if !managed.is_grabbing {
             return Err(CameraError::NotGrabbing(id.to_string()));
         }
 
-        if let Some(camera) = managed.camera.as_ref() {
+        if let Some(camera) = managed.camera.lock().await.as_ref() {
             camera.trigger_one_frame()?;
         }
 
@@ -237,15 +237,14 @@ impl CameraManager {
     }
 
     pub async fn get_frame_size(&self, id: &uuid::Uuid) -> Result<FrameSize, CameraError> {
-        let camera_arc = self
+        let managed = self
             .cameras
             .get(id)
             .ok_or_else(|| CameraError::CameraNotFound(id.to_string()))?;
 
-        let managed = camera_arc.lock().await;
+        let camera = managed.camera.lock().await;
 
-        let camera = managed
-            .camera
+        let camera = camera
             .as_ref()
             .ok_or_else(|| CameraError::NotOpened(id.to_string()))?;
 
@@ -257,19 +256,17 @@ impl CameraManager {
     }
 
     pub async fn close_camera(&self, id: &uuid::Uuid) -> Result<(), CameraError> {
-        let camera_arc = self
+        let mut managed = self
             .cameras
-            .get(id)
+            .get_mut(id)
             .ok_or_else(|| CameraError::CameraNotFound(id.to_string()))?;
 
-        let mut managed = camera_arc.lock().await;
-
         if managed.is_grabbing {
-            managed.is_grabbing = false;
-            if let Some(camera) = managed.camera.as_mut() {
+            if let Some(camera) = managed.camera.lock().await.as_mut() {
                 camera.stop_grab()?;
                 camera.close()?;
             }
+            managed.is_grabbing = false;
         }
         tracing::info!("Closed camera {} (id {})", managed.config.name(), id);
 
@@ -293,10 +290,87 @@ impl CameraManager {
     }
 
     pub async fn is_grabbing(&self, id: &uuid::Uuid) -> bool {
-        if let Some(camera_arc) = self.cameras.get(id) {
-            let managed = camera_arc.lock().await;
+        if let Some(managed) = self.cameras.get(id) {
             return managed.is_grabbing;
         }
         false
+    }
+
+    pub async fn get_stream(
+        &self,
+        id: &uuid::Uuid,
+    ) -> Result<Arc<Mutex<ActiveStream>>, CameraError> {
+        if let Some(stream) = self.streams.get(id) {
+            return Ok(stream.value().clone());
+        }
+        Err(CameraError::CameraNotFound("无此相机流".into()))
+    }
+
+    pub async fn start_stream(
+        &self,
+        id: &uuid::Uuid,
+    ) -> Result<Arc<Mutex<ActiveStream>>, CameraError> {
+        let managed = self.cameras.get(id);
+        if managed.is_none() {
+            return Err(CameraError::CameraNotFound(format!("无此相机 {}", id)));
+        }
+
+        let camera = managed.unwrap();
+        let camera_config = camera.config.clone();
+
+        if camera_config.id.is_none() {
+            return Err(CameraError::Config("配置错误".into()));
+        }
+
+        let id = camera_config.id.unwrap();
+
+        if let Some(stream) = self.streams.get(&id) {
+            return Ok(stream.clone());
+        }
+
+        let stream_config = match self.stream_configs.get(&id) {
+            Some(config) => config.value().clone(),
+            None => CameraStreamConfig::default(),
+        };
+        let active_stream = Arc::new(Mutex::new(ActiveStream::new(
+            id,
+            stream_config,
+            camera_config,
+        )));
+        self.streams.insert(id, active_stream.clone());
+
+        tracing::info!("Added stream {}", id);
+
+        Ok(active_stream)
+    }
+
+    pub async fn stop_stream(&self, id: &uuid::Uuid) -> Result<(), CameraError> {
+        if !self.streams.contains_key(id) {
+            return Err(CameraError::CameraNotFound(format!("无此相机 {}", id)));
+        }
+
+        let stream = self.get_stream(id).await?;
+        let stream = stream.lock().await;
+        stream.stop_stream().await;
+        self.streams.remove(id);
+
+        Ok(())
+    }
+
+    pub async fn update_stream_config(
+        &self,
+        id: uuid::Uuid,
+        config: CameraStreamConfig,
+    ) -> Result<(), CameraError> {
+        if !self.cameras.contains_key(&id) {
+            return Err(CameraError::CameraNotFound(format!("无此相机 {}", id)));
+        }
+
+        self.stream_configs.insert(id, config);
+        if self.streams.contains_key(&id) {
+            self.stop_stream(&id).await?;
+            self.start_stream(&id).await?;
+        }
+        Ok(())
     }
 }

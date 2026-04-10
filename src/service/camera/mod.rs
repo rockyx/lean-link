@@ -5,6 +5,9 @@ use tokio::sync::mpsc;
 
 mod inner;
 pub mod manager;
+pub mod stream;
+#[cfg(feature = "web")]
+pub mod ws_handler;
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub enum CameraSupplier {
@@ -34,13 +37,13 @@ pub struct CameraInfo {
     pub camera_supplier: CameraSupplier,
 }
 
-#[derive(Clone, PartialEq, Eq, Copy)]
+#[derive(Clone, PartialEq, Eq, Copy, Serialize, Deserialize)]
 pub enum GrabMode {
     Continuous,
     SingleFrame,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PixelFormat {
     Undefined,
     Mono1p,
@@ -148,6 +151,7 @@ pub struct FrameSize {
     pub height: usize,
 }
 
+/// original camera frame
 #[derive(Clone)]
 pub struct CameraFrame {
     pub data: bytes::Bytes,
@@ -163,19 +167,22 @@ pub struct CameraFrame {
     pub recv_frame_time: u64,
 }
 
-pub trait IndustryCamera {
-    fn open(&self) -> Result<(), CameraError>;
-    fn is_opened(&self) -> bool;
-    fn is_grabbing(&self) -> bool;
-    fn stop_grab(&self) -> Result<(), CameraError>;
-    fn start_grab(&mut self) -> Result<(), CameraError>;
-    fn close(&self) -> Result<(), CameraError>;
-    fn frame_size(&self) -> Result<FrameSize, CameraError>;
-    fn trigger_one_frame(&self) -> Result<(), CameraError>;
-    fn create_frame_channel(&mut self) -> mpsc::Receiver<CameraFrame>;
-    fn set_grab_mode(&mut self, grab_mode: GrabMode);
-    fn set_exposure_auto(&mut self, auto: bool);
-    fn set_exposure_time(&mut self, time: std::time::Duration);
+/// Frame encoding format
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum FrameEncoding {
+    /// JPEG compressed (lossy, smaller size)
+    Jpeg,
+    /// Raw bytes (no compression, larger size)
+    Raw,
+    /// PNG compressed
+    Png,
+}
+
+impl Default for FrameEncoding {
+    fn default() -> Self {
+        Self::Jpeg
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -215,6 +222,21 @@ impl CameraConfig {
     pub fn gen_id(&mut self) {
         self.id = Some(uuid::Uuid::new_v4());
     }
+}
+
+pub trait IndustryCamera: Send + Sync {
+    fn open(&self) -> Result<(), CameraError>;
+    fn is_opened(&self) -> bool;
+    fn is_grabbing(&self) -> bool;
+    fn stop_grab(&self) -> Result<(), CameraError>;
+    fn start_grab(&mut self) -> Result<(), CameraError>;
+    fn close(&self) -> Result<(), CameraError>;
+    fn frame_size(&self) -> Result<FrameSize, CameraError>;
+    fn trigger_one_frame(&self) -> Result<(), CameraError>;
+    fn create_frame_channel(&mut self) -> mpsc::Receiver<CameraFrame>;
+    fn set_grab_mode(&mut self, grab_mode: GrabMode);
+    fn set_exposure_auto(&mut self, auto: bool);
+    fn set_exposure_time(&mut self, time: std::time::Duration);
 }
 
 /// Camera error types

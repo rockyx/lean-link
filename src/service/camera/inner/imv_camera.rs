@@ -223,6 +223,10 @@ pub struct IMVCamera {
     pub frame_sender: Option<mpsc::Sender<CameraFrame>>,
 }
 
+unsafe impl Send for IMVCamera {}
+
+unsafe impl Sync for IMVCamera {}
+
 impl IndustryCamera for IMVCamera {
     fn open(&self) -> Result<(), CameraError> {
         if self.is_opened() {
