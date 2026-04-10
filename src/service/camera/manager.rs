@@ -3,7 +3,7 @@ use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock, mpsc};
 
 use crate::service::camera::{
-    self, CameraConfig, CameraError, CameraFrame, CameraInfo, CameraSupplier, FrameSize, GrabMode,
+    CameraConfig, CameraError, CameraFrame, CameraInfo, CameraSupplier, FrameSize, GrabMode,
     IndustryCamera,
     inner::imv_camera,
     stream::{ActiveStream, CameraStreamConfig},
@@ -367,10 +367,11 @@ impl CameraManager {
         }
 
         self.stream_configs.insert(id, config);
-        if self.streams.contains_key(&id) {
-            self.stop_stream(&id).await?;
-            self.start_stream(&id).await?;
-        }
+
         Ok(())
+    }
+
+    pub fn is_active_stream(&self, id: &uuid::Uuid) -> bool {
+        self.streams.contains_key(id)
     }
 }
