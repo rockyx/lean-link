@@ -1,8 +1,50 @@
 use std::time::Duration;
+use serde::{Deserialize, Serialize};
+use serialport::{DataBits, FlowControl, Parity, StopBits};
 use tokio::select;
 use tokio_modbus::{prelude::*, *};
 
 mod inner;
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct ModbusTCPConfig {
+    pub host: String,
+    pub port: u16,
+}
+
+impl Default for ModbusTCPConfig {
+    fn default() -> Self {
+        ModbusTCPConfig {
+            host: "192.168.1.100".to_string(),
+            port: 502,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct ModbusRTUConfig {
+    pub path: String,
+    pub baud_rate: u32,
+    pub data_bits: DataBits,
+    pub stop_bits: StopBits,
+    pub parity: Parity,
+    pub flow_control: FlowControl,
+    #[serde(with = "crate::utils::datetime::string_to_duration")]
+    pub timeout: Duration,
+}
+
+impl Default for ModbusRTUConfig {
+    fn default() -> Self {
+        ModbusRTUConfig {
+            path: "/dev/ttyUSB0".to_string(),
+            baud_rate: 9600,
+            data_bits: DataBits::Eight,
+            stop_bits: StopBits::One,
+            parity: Parity::None,
+            flow_control: FlowControl::None,
+            timeout: Duration::from_secs(1),
+        }
+    }
+}
 
 pub struct ModbusRTUBuilder {
     path: String,

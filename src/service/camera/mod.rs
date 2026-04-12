@@ -7,7 +7,7 @@ mod inner;
 pub mod manager;
 pub mod stream;
 #[cfg(feature = "web")]
-pub mod rest_api;
+pub mod rest;
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub enum CameraSupplier {

@@ -10,7 +10,7 @@ fn main() {
             panic!("Features 'sqlite', 'mysql' and 'postgres' cannot be enabled together.");
         }
     }
-    #[cfg(feature = "imv-camera")]
+    #[cfg(feature = "industry-camera")]
     {
         use std::env;
         use std::path::PathBuf;

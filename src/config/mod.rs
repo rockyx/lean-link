@@ -1,14 +1,7 @@
 use directories::ProjectDirs;
-#[cfg(feature = "mqtt")]
-use rumqttc::QoS;
 use serde::{Deserialize, Serialize};
-#[cfg(any(feature = "modbus", feature = "serialport"))]
-use serialport::{DataBits, FlowControl, Parity, StopBits};
 use std::fs::File;
 use std::path::{Path, PathBuf};
-#[cfg(any(feature = "modbus", feature = "serialport", feature = "web"))]
-use std::time::Duration;
-
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct DatabaseConfig {
     pub url: String,
@@ -18,238 +11,6 @@ impl Default for DatabaseConfig {
     fn default() -> Self {
         DatabaseConfig {
             url: "sqlite://leanlink.db".to_string(),
-        }
-    }
-}
-
-#[cfg(feature = "web")]
-#[derive(Debug, Deserialize, Serialize, Clone)]
-pub struct WebConfig {
-    pub host: String,
-    pub port: u16,
-}
-
-#[cfg(feature = "web")]
-impl Default for WebConfig {
-    fn default() -> Self {
-        WebConfig {
-            host: "127.0.0.1".to_string(),
-            port: 8080,
-        }
-    }
-}
-
-#[cfg(feature = "web")]
-#[derive(Debug, Deserialize, Serialize, Clone)]
-pub struct WebSocketConfig {
-    pub host: String,
-    pub port: u16,
-    pub max_connections: u32,
-    pub broadcast_channel_capacity: usize,
-    #[serde(with = "crate::utils::datetime::string_to_duration")]
-    pub heartbeat_interval: Duration,
-}
-
-#[cfg(feature = "web")]
-impl Default for WebSocketConfig {
-    fn default() -> Self {
-        WebSocketConfig {
-            host: "127.0.0.1".to_string(),
-            port: 8081,
-            max_connections: 100,
-            broadcast_channel_capacity: 128,
-            heartbeat_interval: Duration::from_secs(30),
-        }
-    }
-}
-
-#[cfg(feature = "web")]
-#[derive(Debug, Deserialize, Serialize, Clone)]
-pub struct JwtConfig {
-    pub secret: String,
-    #[serde(with = "crate::utils::datetime::string_to_duration")]
-    pub expires_in: Duration,
-}
-
-#[cfg(feature = "web")]
-impl Default for JwtConfig {
-    fn default() -> Self {
-        JwtConfig {
-            secret: "secret".to_string(),
-            expires_in: Duration::from_secs(3600),
-        }
-    }
-}
-
-#[cfg(feature = "modbus")]
-#[derive(Debug, Deserialize, Serialize, Clone)]
-pub struct ModbusTCPConfig {
-    pub host: String,
-    pub port: u16,
-}
-
-#[cfg(feature = "modbus")]
-impl Default for ModbusTCPConfig {
-    fn default() -> Self {
-        ModbusTCPConfig {
-            host: "192.168.1.100".to_string(),
-            port: 502,
-        }
-    }
-}
-
-#[cfg(feature = "modbus")]
-#[derive(Debug, Deserialize, Serialize, Clone)]
-pub struct ModbusRTUConfig {
-    pub path: String,
-    pub baud_rate: u32,
-    pub data_bits: DataBits,
-    pub stop_bits: StopBits,
-    pub parity: Parity,
-    pub flow_control: FlowControl,
-    #[serde(with = "crate::utils::datetime::string_to_duration")]
-    pub timeout: Duration,
-}
-
-#[cfg(feature = "modbus")]
-impl Default for ModbusRTUConfig {
-    fn default() -> Self {
-        ModbusRTUConfig {
-            path: "/dev/ttyUSB0".to_string(),
-            baud_rate: 9600,
-            data_bits: DataBits::Eight,
-            stop_bits: StopBits::One,
-            parity: Parity::None,
-            flow_control: FlowControl::None,
-            timeout: Duration::from_secs(1),
-        }
-    }
-}
-
-#[cfg(feature = "serialport")]
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SerialPortConfig {
-    pub path: String,
-    pub baud_rate: u32,
-    pub data_bits: DataBits,
-    pub stop_bits: StopBits,
-    pub parity: Parity,
-    pub flow_control: FlowControl,
-    #[serde(with = "crate::utils::datetime::string_to_duration")]
-    pub timeout: Duration,
-}
-
-#[cfg(feature = "serialport")]
-impl Default for SerialPortConfig {
-    fn default() -> Self {
-        SerialPortConfig {
-            path: "/dev/ttyUSB0".to_string(),
-            baud_rate: 9600,
-            data_bits: DataBits::Eight,
-            stop_bits: StopBits::One,
-            parity: Parity::None,
-            flow_control: FlowControl::None,
-            timeout: Duration::from_secs(1),
-        }
-    }
-}
-
-
-#[cfg(feature = "mqtt")]
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
-pub struct MqttTopic {
-    pub topic: String,
-    #[serde(with = "string_to_qos")]
-    pub qos: QoS,
-}
-
-#[cfg(feature = "mqtt")]
-impl Default for MqttTopic {
-    fn default() -> Self {
-        MqttTopic {
-            topic: "leanlink/topic".to_string(),
-            qos: QoS::AtLeastOnce,
-        }
-    }
-}
-
-#[cfg(feature = "mqtt")]
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
-pub struct MqttConfig {
-    pub host: String,
-    pub port: u16,
-    pub username: String,
-    pub password: String,
-    pub client_id: String,
-    pub topic: Vec<MqttTopic>,
-    #[serde(with = "crate::utils::datetime::string_to_duration")]
-    pub keep_alive: Duration,
-}
-
-#[cfg(feature = "mqtt")]
-impl Default for MqttConfig {
-    fn default() -> Self {
-        MqttConfig {
-            host: "localhost".to_string(),
-            port: 1883,
-            username: "user".to_string(),
-            password: "password".to_string(),
-            client_id: "leanlink_client".to_string(),
-            topic: vec![MqttTopic::default()],
-            keep_alive: Duration::from_secs(60),
-        }
-    }
-}
-
-#[cfg(feature = "mqtt")]
-mod string_to_qos {
-    use rumqttc::QoS;
-    use serde::{Deserialize, Deserializer, Serializer, de::Error};
-
-    pub fn serialize<S>(qos: &QoS, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        match qos {
-            QoS::AtMostOnce => serializer.serialize_str("AtMostOnce"),
-            QoS::AtLeastOnce => serializer.serialize_str("AtLeastOnce"),
-            QoS::ExactlyOnce => serializer.serialize_str("ExactlyOnce"),
-        }
-    }
-
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<QoS, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let s = String::deserialize(deserializer)?;
-        match s.as_str() {
-            "AtMostOnce" => Ok(QoS::AtMostOnce),
-            "AtLeastOnce" => Ok(QoS::AtLeastOnce),
-            "ExactlyOnce" => Ok(QoS::ExactlyOnce),
-            _ => Err(D::Error::custom(format!("Invalid QoS: {}", s))),
-        }
-    }
-}
-
-#[cfg(feature = "socket")]
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
-pub struct SocketConfig {
-    pub host: String,
-    pub port: u16,
-    pub max_connections: u32,
-    #[serde(with = "crate::utils::datetime::string_to_duration")]
-    pub heartbeat_interval: Duration,
-}
-
-#[cfg(feature = "socket")]
-impl Default for SocketConfig {
-    fn default() -> Self {
-        SocketConfig {
-            host: "0.0.0.0".to_string(),
-            port: 9000,
-            max_connections: 100,
-            heartbeat_interval: Duration::from_secs(30),
         }
     }
 }
@@ -281,23 +42,23 @@ impl Default for Sys {
 pub struct ServerConfig {
     pub database: DatabaseConfig,
     #[cfg(feature = "web")]
-    pub web: WebConfig,
+    pub web: crate::service::web::WebConfig,
     #[cfg(feature = "web")]
-    pub jwt: JwtConfig,
+    pub jwt: crate::service::web::JwtConfig,
     #[cfg(feature = "web")]
-    pub web_socket: WebSocketConfig,
+    pub web_socket: crate::service::websocket::WebSocketConfig,
     #[cfg(feature = "modbus")]
-    pub modbus_tcp: Vec<ModbusTCPConfig>,
+    pub modbus_tcp: Vec<crate::service::modbus::ModbusTCPConfig>,
     #[cfg(feature = "modbus")]
-    pub modbus_rtu: Vec<ModbusRTUConfig>,
+    pub modbus_rtu: Vec<crate::service::modbus::ModbusRTUConfig>,
     #[cfg(feature = "serialport")]
-    pub serialport: Vec<SerialPortConfig>,
+    pub serialport: Vec<crate::service::serialport::SerialPortConfig>,
     #[cfg(feature = "mqtt")]
-    pub mqtt: Vec<MqttConfig>,
+    pub mqtt: Vec<crate::service::mqtt::MqttConfig>,
     #[serde(default)]
     pub sys: Sys,
     #[cfg(feature = "socket")]
-    pub socket: Vec<SocketConfig>,
+    pub socket: Vec<crate::service::socket::SocketConfig>,
 }
 
 impl Default for ServerConfig {
@@ -305,22 +66,22 @@ impl Default for ServerConfig {
         ServerConfig {
             database: DatabaseConfig::default(),
             #[cfg(feature = "web")]
-            web: WebConfig::default(),
+            web: crate::service::web::WebConfig::default(),
             #[cfg(feature = "web")]
-            jwt: JwtConfig::default(),
+            jwt: crate::service::web::JwtConfig::default(),
             #[cfg(feature = "web")]
-            web_socket: WebSocketConfig::default(),
+            web_socket: crate::service::websocket::WebSocketConfig::default(),
             #[cfg(feature = "modbus")]
-            modbus_tcp: vec![ModbusTCPConfig::default()],
+            modbus_tcp: vec![],
             #[cfg(feature = "modbus")]
-            modbus_rtu: vec![ModbusRTUConfig::default()],
+            modbus_rtu: vec![],
             #[cfg(feature = "serialport")]
-            serialport: vec![SerialPortConfig::default()],
+            serialport: vec![],
             #[cfg(feature = "mqtt")]
-            mqtt: vec![MqttConfig::default()],
+            mqtt: vec![],
             sys: Sys::default(),
             #[cfg(feature = "socket")]
-            socket: vec![SocketConfig::default()],
+            socket: vec![],
         }
     }
 }

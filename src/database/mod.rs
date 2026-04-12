@@ -3,3 +3,7 @@ pub mod migrator;
 pub mod users;
 pub mod logs;
 pub mod settings;
+#[cfg(feature = "modbus")]
+pub mod modbus_configs;
+#[cfg(feature = "serialport")]
+pub mod serialport_configs;

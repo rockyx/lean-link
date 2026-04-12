@@ -1,15 +1,33 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use bytes::{Bytes, BytesMut};
 use dashmap::DashMap;
+use serde::{Deserialize, Serialize};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
     select,
     sync::{broadcast, mpsc},
 };
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+pub struct SocketConfig {
+    pub host: String,
+    pub port: u16,
+    pub max_connections: u32,
+    #[serde(with = "crate::utils::datetime::string_to_duration")]
+    pub heartbeat_interval: Duration,
+}
 
-use crate::config::SocketConfig;
+impl Default for SocketConfig {
+    fn default() -> Self {
+        SocketConfig {
+            host: "0.0.0.0".to_string(),
+            port: 9000,
+            max_connections: 100,
+            heartbeat_interval: Duration::from_secs(30),
+        }
+    }
+}
 
 #[derive(Debug)]
 pub enum SocketMessage {

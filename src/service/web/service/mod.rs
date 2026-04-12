@@ -7,6 +7,10 @@ use serde::{Deserialize, Serialize};
 pub mod default;
 pub mod user;
 pub mod log;
+#[cfg(feature = "modbus")]
+pub mod modbus;
+#[cfg(feature = "serialport")]
+pub mod serialport;
 
 #[derive(Serialize, Deserialize)]
 #[repr(u32)]
@@ -16,6 +20,7 @@ pub enum ErrorCode {
     InvalidUsernameOrPassword = 10001,
     Unauthorized = 10002,
     OperationNotAllow = 20001,
+    NotFound = 40404,
     InternalError = 50001,
 }
 
@@ -25,6 +30,7 @@ impl Display for ErrorCode {
             ErrorCode::Success => "操作成功",
             ErrorCode::InvalidUsernameOrPassword => "用户名或密码无效",
             ErrorCode::Unauthorized => "未经授权的访问",
+            ErrorCode::NotFound => "无此资源",
             ErrorCode::OperationNotAllow => "不允许执行该操作",
             ErrorCode::InternalError => "服务器内部错误",
         };

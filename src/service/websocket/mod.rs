@@ -1,6 +1,6 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
-use crate::config::{Sys, WebSocketConfig};
+use crate::config::Sys;
 use bytes::Bytes;
 use dashmap::DashMap;
 use futures::{SinkExt, StreamExt, stream::SplitSink};
@@ -11,6 +11,28 @@ use tokio::{
     sync::{broadcast, mpsc},
 };
 use tokio_tungstenite::{WebSocketStream, accept_async, tungstenite::Message};
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct WebSocketConfig {
+    pub host: String,
+    pub port: u16,
+    pub max_connections: u32,
+    pub broadcast_channel_capacity: usize,
+    #[serde(with = "crate::utils::datetime::string_to_duration")]
+    pub heartbeat_interval: Duration,
+}
+
+impl Default for WebSocketConfig {
+    fn default() -> Self {
+        WebSocketConfig {
+            host: "127.0.0.1".to_string(),
+            port: 8081,
+            max_connections: 100,
+            broadcast_channel_capacity: 128,
+            heartbeat_interval: Duration::from_secs(30),
+        }
+    }
+}
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct WsMessage<T> {
@@ -200,7 +222,10 @@ async fn handle_websocket_message(
                                                         );
                                                     }
                                                     Err(e) => {
-                                                        tracing::error!("Failed to get I2C bus: {}", e);
+                                                        tracing::error!(
+                                                            "Failed to get I2C bus: {}",
+                                                            e
+                                                        );
                                                     }
                                                 }
                                             }

@@ -106,7 +106,7 @@ pub mod api {
             camera::{
                 CameraInfo,
                 manager::CameraManager,
-                rest_api::{StreamStartRequest, StreamStopRequest, StreamUpdateConfigRequest},
+                rest::{self, StreamStartRequest, StreamStopRequest, StreamUpdateConfigRequest},
             },
             web::service::{ErrorCode, WebResponse},
         },
@@ -133,7 +133,7 @@ pub mod api {
         manager: web::Data<CameraManager>,
         req: web::Json<StreamStartRequest>,
     ) -> actix_web::Result<web::Json<WebResponse<()>>, errors::Error> {
-        super::stream_start(app_state, manager, &req.into_inner()).await
+        rest::stream_start(app_state, manager, &req.into_inner()).await
     }
 
     #[post("/stream/stop")]
@@ -157,7 +157,7 @@ pub mod api {
                 id: req.id.clone(),
                 config: req.config.clone(),
             };
-            return super::stream_start(app_state, manager, &req).await;
+            return rest::stream_start(app_state, manager, &req).await;
         }
 
         manager
