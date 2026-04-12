@@ -1,22 +1,9 @@
 use serde::{Deserialize, Serialize};
 
-/// Trigger mode for camera acquisition
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "PascalCase")]
-pub enum TriggerMode {
-    /// External trigger from PLC/Modbus
-    External,
-
-    /// Serial port trigger
-    Serial,
-
-    /// Continuous frame capture
-    #[default]
-    Continuous,
-
-    /// Manual trigger via API
-    Manual,
-}
+#[cfg(feature = "inspection")]
+pub use crate::database::entity::t_inspection_stations::TriggerMode;
+#[cfg(feature = "inspection")]
+pub use crate::database::entity::t_station_rois::RoiPurpose;
 
 /// Rectangle region definition
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
@@ -243,29 +230,6 @@ impl RoiShape {
     }
 }
 
-/// ROI purpose/type
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "PascalCase")]
-pub enum RoiPurpose {
-    /// Detection region - where inspection occurs
-    Detection,
-    /// Alignment reference - for position calibration
-    Alignment,
-    /// Exclusion region - ignore this area
-    Exclusion,
-}
-
-impl RoiPurpose {
-    /// Get display name in Chinese
-    pub fn display_name(&self) -> &'static str {
-        match self {
-            RoiPurpose::Detection => "检测区域",
-            RoiPurpose::Alignment => "定位参考",
-            RoiPurpose::Exclusion => "排除区域",
-        }
-    }
-}
-
 /// Complete ROI configuration
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -357,7 +321,7 @@ impl DetectionType {
         }
     }
 
-    pub fn with_parameters<S: Into<String>> (
+    pub fn with_parameters<S: Into<String>>(
         id: S,
         display_name: S,
         parameters: serde_json::Value,
@@ -370,7 +334,7 @@ impl DetectionType {
 
     pub fn with_description<S: Into<String>>(mut self, description: S) -> Self {
         self.description = description.into();
-        self 
+        self
     }
 
     pub fn requires_model(mut self, requires: bool) -> Self {
@@ -429,9 +393,7 @@ pub struct StationConfig {
 impl StationConfig {
     /// Get all ROIs, merging legacy and new formats
     pub fn get_all_rois(&self) -> Vec<RoiConfig> {
-        let result = self.rois.clone();
-
-        result
+        self.rois.clone()
     }
 
     /// Get ROIs by purpose

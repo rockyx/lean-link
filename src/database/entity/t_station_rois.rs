@@ -19,6 +19,17 @@ pub enum RoiPurpose {
     Exclusion,
 }
 
+impl RoiPurpose {
+    /// Get display name in Chinese
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            RoiPurpose::Detection => "检测区域",
+            RoiPurpose::Alignment => "定位参考",
+            RoiPurpose::Exclusion => "排除区域",
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct ParseRoiPurposeError;
 
