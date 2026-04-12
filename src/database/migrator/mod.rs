@@ -11,3 +11,5 @@ pub mod m20260412_000002_create_tables;
 pub mod m20260412_000003_create_tables;
 #[cfg(feature = "industry-camera")]
 pub mod m20260412_000004_create_tables;
+#[cfg(feature = "inspection")]
+pub mod m20260412_000005_create_tables;

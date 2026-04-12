@@ -20,6 +20,10 @@ pub mod t_serialport_configs;
 pub mod t_modbus_configs;
 #[cfg(feature = "industry-camera")]
 pub mod t_camera_configs;
+#[cfg(feature = "inspection")]
+pub mod t_inspection_stations;
+#[cfg(feature = "inspection")]
+pub mod t_station_rois;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]

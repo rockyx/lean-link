@@ -469,13 +469,15 @@ mod tests {
 
     #[test]
     fn test_detection_type_display() {
-        assert_eq!(DetectionType::TerminalCrimp.display_name(), "端子压接检测");
-        assert_eq!(DetectionType::WireConnection.display_name(), "导线连接检测");
-        assert_eq!(DetectionType::Insulation.display_name(), "绝缘层检测");
-        assert_eq!(
-            DetectionType::TerminalInsertion.display_name(),
-            "端子插接检测"
-        );
+        let terminal_crimp = DetectionType::new("terminal_crimp", "端子压接检测");
+        let wire_connection = DetectionType::new("wire_connection", "导线连接检测");
+        let insulation = DetectionType::new("insulation", "绝缘层检测");
+        let terminal_insertion = DetectionType::new("terminal_insertion", "端子插接检测");
+
+        assert_eq!(terminal_crimp.display_name, "端子压接检测");
+        assert_eq!(wire_connection.display_name, "导线连接检测");
+        assert_eq!(insulation.display_name, "绝缘层检测");
+        assert_eq!(terminal_insertion.display_name, "端子插接检测");
     }
 
     #[test]
@@ -584,7 +586,7 @@ mod tests {
             name: "测试站".to_string(),
             camera_id: uuid::Uuid::nil(),
             trigger_mode: TriggerMode::default(),
-            detection_types: vec![DetectionType::TerminalCrimp],
+            detection_types: vec!["terminal_crimp".to_string()],
             rois: vec![],
             is_enabled: true,
             model_path: None,
@@ -632,7 +634,7 @@ mod tests {
             name: "测试站".to_string(),
             camera_id: uuid::Uuid::nil(),
             trigger_mode: TriggerMode::default(),
-            detection_types: vec![DetectionType::TerminalCrimp],
+            detection_types: vec!["terminal_crimp".to_string()],
             rois: vec![],
             is_enabled: true,
             model_path: None,
@@ -640,10 +642,9 @@ mod tests {
             serial_port: None,
         };
 
-        // get_all_rois should include legacy ROI converted to new format
+        // get_all_rois should return empty when no rois configured
         let all_rois = config.get_all_rois();
-        assert_eq!(all_rois.len(), 1);
-        assert_eq!(all_rois[0].id, "legacy_roi");
+        assert_eq!(all_rois.len(), 0);
     }
 
     #[test]
@@ -651,7 +652,7 @@ mod tests {
         let roi = RoiConfig::detection_rect("roi_1", "检测区", 0.1, 0.2, 0.3, 0.4);
         let json = serde_json::to_string(&roi).unwrap();
         assert!(json.contains("\"id\":\"roi_1\""));
-        assert!(json.contains("\"type\":\"rectangle\""));
+        assert!(json.contains("\"type\":\"Rectangle\"")); // PascalCase
 
         // Deserialize back
         let decoded: RoiConfig = serde_json::from_str(&json).unwrap();

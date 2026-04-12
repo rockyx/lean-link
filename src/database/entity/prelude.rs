@@ -19,3 +19,7 @@ pub use super::t_modbus_configs::Entity as TModbusConfigs;
 pub use super::t_serialport_configs::Entity as TSerialportConfigs;
 #[cfg(feature = "industry-camera")]
 pub use super::t_camera_configs::Entity as TCameraConfigs;
+#[cfg(feature = "inspection")]
+pub use super::t_inspection_stations::Entity as TInspectionStations;
+#[cfg(feature = "inspection")]
+pub use super::t_station_rois::Entity as TStationRois;

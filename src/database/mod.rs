@@ -9,3 +9,5 @@ pub mod modbus_configs;
 pub mod serialport_configs;
 #[cfg(feature = "industry-camera")]
 pub mod camera_configs;
+#[cfg(feature = "inspection")]
+pub mod inspection_stations;
