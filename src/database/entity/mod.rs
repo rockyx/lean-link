@@ -18,6 +18,8 @@ pub mod t_inspection_statistics;
 pub mod t_serialport_configs;
 #[cfg(feature = "modbus")]
 pub mod t_modbus_configs;
+#[cfg(feature = "industry-camera")]
+pub mod t_camera_configs;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]

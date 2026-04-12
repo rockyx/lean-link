@@ -126,14 +126,10 @@ impl MigrationTrait for Migration {
 }
 
 // 定义表名常量
-const INSPECTION_RECORDS_TABLE: &str = "t_inspection_records";
-const INSPECTION_DETAILS_TABLE: &str = "t_inspection_details";
-const GEOMETRY_MEASUREMENTS_TABLE: &str = "t_geometry_measurements";
-const DEFECT_DETAILS_TABLE: &str = "t_defect_details";
-const INSPECTION_STATISTICS_TABLE: &str = "t_inspection_statistics";
 
 #[derive(Iden)]
 enum InspectionRecords {
+    #[iden = "t_inspection_records"]
     Table,
     Id,
     StationId,
@@ -160,6 +156,7 @@ enum InspectionRecords {
 
 #[derive(Iden)]
 enum InspectionDetails {
+    #[iden = "t_inspection_details"]
     Table,
     Id,
     InspectionId,
@@ -180,6 +177,7 @@ enum InspectionDetails {
 
 #[derive(Iden)]
 enum GeometryMeasurements {
+    #[iden = "t_geometry_measurements"]
     Table,
     Id,
     InspectionDetailId,
@@ -205,6 +203,7 @@ enum GeometryMeasurements {
 
 #[derive(Iden)]
 enum DefectDetails {
+    #[iden = "t_defect_details"]
     Table,
     Id,
     InspectionDetailId,
@@ -226,6 +225,7 @@ enum DefectDetails {
 
 #[derive(Iden)]
 enum InspectionStatistics {
+    #[iden = "t_inspection_statistics"]
     Table,
     Id,
     StationId,
@@ -924,7 +924,7 @@ async fn create_partitioned_tables(manager: &SchemaManager<'_>) -> Result<(), Db
         // 创建分区表
         let create_partition_sql = format!(
             r#"
-            CREATE TABLE IF NOT EXISTS {} PARTITION OF inspection_records
+            CREATE TABLE IF NOT EXISTS {} PARTITION OF t_inspection_records
             FOR VALUES FROM ('{}') TO ('{}');
             "#,
             partition_name, start_date, end_date

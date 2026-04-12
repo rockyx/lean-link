@@ -1,7 +1,9 @@
 use dashmap::DashMap;
+use sea_orm::{ActiveValue, DatabaseConnection};
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock, mpsc};
 
+use crate::database::entity::t_camera_configs;
 use crate::service::camera::{
     CameraConfig, CameraError, CameraFrame, CameraInfo, CameraSupplier, FrameSize, GrabMode,
     IndustryCamera,
@@ -35,6 +37,7 @@ impl ManagedCamera {
 }
 
 pub struct CameraManager {
+    db_conn: DatabaseConnection,
     cameras: DashMap<uuid::Uuid, ManagedCamera>,
     available_cameras: Arc<RwLock<Vec<CameraInfo>>>,
     streams: DashMap<uuid::Uuid, Arc<Mutex<ActiveStream>>>,
@@ -42,14 +45,17 @@ pub struct CameraManager {
 }
 
 impl CameraManager {
-    pub fn new() -> Self {
+    pub fn new(db_conn: DatabaseConnection) -> Self {
         Self {
+            db_conn,
             cameras: DashMap::new(),
             available_cameras: Arc::new(RwLock::new(Vec::new())),
             streams: DashMap::new(),
             stream_configs: DashMap::new(),
         }
     }
+
+    // ==================== Camera Enumeration ====================
 
     pub async fn enumerate_cameras(&self) -> Result<Vec<CameraInfo>, CameraError> {
         let cameras = imv_camera::get_camera_list()
@@ -72,43 +78,264 @@ impl CameraManager {
         Ok(available.clone())
     }
 
-    pub async fn get_avilable_cameras(&self) -> Vec<CameraInfo> {
+    pub async fn get_available_cameras(&self) -> Vec<CameraInfo> {
         let available = self.available_cameras.read().await;
         available.clone()
     }
 
-    pub async fn initialize_from_config(
-        &self,
-        configs: &[CameraConfig],
-    ) -> Result<(), CameraError> {
+    // ==================== Database CRUD Operations ====================
+
+    /// Initialize cameras from database (called at system startup)
+    pub async fn initialize_from_database(&self) -> Result<(), CameraError> {
         self.enumerate_cameras().await?;
 
-        for config in configs {
-            self.add_camera(config.clone()).await?;
+        let configs = crate::database::camera_configs::find_camera_configs_by_enabled(&self.db_conn, true)
+            .await
+            .map_err(|e| CameraError::Config(format!("读取数据库失败: {}", e)))?;
+
+        for model in configs {
+            let config: CameraConfig = model.into();
+            let id = config.id.unwrap();
+
+            if !self.cameras.contains_key(&id) {
+                let managed = ManagedCamera::new(config.clone());
+                self.cameras.insert(id, managed);
+                tracing::info!(
+                    "Initialized camera {} (key: {}, serial: {})",
+                    config.name(),
+                    config.key.unwrap_or_default(),
+                    config.serial_number.unwrap_or_default()
+                );
+            }
         }
 
+        tracing::info!("Initialized {} cameras from database", self.cameras.len());
         Ok(())
     }
 
-    pub async fn add_camera(&self, config: CameraConfig) -> Result<(), CameraError> {
+    /// Create a new camera config (insert to database and add to memory)
+    pub async fn create_camera(&self, config: CameraConfig) -> Result<CameraConfig, CameraError> {
+        let id = uuid::Uuid::now_v7();
+        let active_model = t_camera_configs::ActiveModel {
+            id: ActiveValue::set(id),
+            device_user_id: ActiveValue::set(config.device_user_id.clone()),
+            key: ActiveValue::set(config.key.clone()),
+            serial_number: ActiveValue::set(config.serial_number.clone()),
+            vendor: ActiveValue::set(config.vendor.clone()),
+            model: ActiveValue::set(config.model.clone()),
+            manufacture_info: ActiveValue::set(config.manufacture_info.clone()),
+            device_version: ActiveValue::set(config.device_version.clone()),
+            exposure_time_ms: ActiveValue::set(config.exposure_time_ms),
+            exposure_auto: ActiveValue::set(config.exposure_auto),
+            ip_address: ActiveValue::set(config.ip_address.clone()),
+            camera_supplier: ActiveValue::set(config.camera_supplier.to_string()),
+            enabled: ActiveValue::set(true),
+        };
+
+        crate::database::camera_configs::insert_camera_config(&self.db_conn, active_model)
+            .await
+            .map_err(|e| CameraError::Config(format!("写入数据库失败: {}", e)))?;
+
+        let model = crate::database::camera_configs::find_camera_config_by_id(&self.db_conn, id)
+            .await
+            .map_err(|e| CameraError::Config(format!("读取数据库失败: {}", e)))?
+            .ok_or_else(|| CameraError::Config("创建后未找到配置".into()))?;
+
+        let new_config: CameraConfig = model.clone().into();
+
+        // Add to memory
+        let managed = ManagedCamera::new(new_config.clone());
+        self.cameras.insert(id, managed);
+
+        tracing::info!("Created camera {} (id: {})", new_config.name(), id);
+        Ok(new_config)
+    }
+
+    /// Get camera config from database by ID
+    pub async fn get_camera(&self, id: uuid::Uuid) -> Result<CameraConfig, CameraError> {
+        let model = crate::database::camera_configs::find_camera_config_by_id(&self.db_conn, id)
+            .await
+            .map_err(|e| CameraError::Config(format!("读取数据库失败: {}", e)))?
+            .ok_or_else(|| CameraError::CameraNotFound(id.to_string()))?;
+
+        Ok(model.into())
+    }
+
+    /// List camera configs from database with pagination
+    pub async fn list_cameras(
+        &self,
+        page: u64,
+        size: u64,
+        enabled: Option<bool>,
+    ) -> Result<crate::database::entity::PageResult<CameraConfig>, CameraError> {
+        let page_result = if let Some(en) = enabled {
+            let records = crate::database::camera_configs::find_camera_configs_by_enabled(&self.db_conn, en)
+                .await
+                .map_err(|e| CameraError::Config(format!("读取数据库失败: {}", e)))?;
+            crate::database::entity::PageResult {
+                records: records.into_iter().map(|m| m.into()).collect(),
+                page_index: 1,
+                page_size: size,
+                total_count: 0,
+                pages: 1,
+            }
+        } else {
+            let result = crate::database::camera_configs::page_camera_configs(&self.db_conn, page, size)
+                .await
+                .map_err(|e| CameraError::Config(format!("读取数据库失败: {}", e)))?;
+            crate::database::entity::PageResult {
+                records: result.records.into_iter().map(|m| m.into()).collect(),
+                page_index: result.page_index,
+                page_size: result.page_size,
+                total_count: result.total_count,
+                pages: result.pages,
+            }
+        };
+
+        Ok(page_result)
+    }
+
+    /// Update camera config (update database and memory)
+    pub async fn update_camera(&self, id: uuid::Uuid, config: CameraConfig) -> Result<CameraConfig, CameraError> {
+        let existing = crate::database::camera_configs::find_camera_config_by_id(&self.db_conn, id)
+            .await
+            .map_err(|e| CameraError::Config(format!("读取数据库失败: {}", e)))?
+            .ok_or_else(|| CameraError::CameraNotFound(id.to_string()))?;
+
+        let active_model = t_camera_configs::ActiveModel {
+            id: ActiveValue::set(id),
+            device_user_id: ActiveValue::set(config.device_user_id.or(existing.device_user_id)),
+            key: ActiveValue::set(config.key.or(existing.key)),
+            serial_number: ActiveValue::set(config.serial_number.or(existing.serial_number)),
+            vendor: ActiveValue::set(config.vendor.or(existing.vendor)),
+            model: ActiveValue::set(config.model.or(existing.model)),
+            manufacture_info: ActiveValue::set(config.manufacture_info.or(existing.manufacture_info)),
+            device_version: ActiveValue::set(config.device_version.or(existing.device_version)),
+            exposure_time_ms: ActiveValue::set(config.exposure_time_ms),
+            exposure_auto: ActiveValue::set(config.exposure_auto),
+            ip_address: ActiveValue::set(config.ip_address.or(existing.ip_address)),
+            camera_supplier: ActiveValue::set(config.camera_supplier.to_string()),
+            enabled: ActiveValue::set(existing.enabled),
+        };
+
+        crate::database::camera_configs::update_camera_config(&self.db_conn, id, active_model)
+            .await
+            .map_err(|e| CameraError::Config(format!("更新数据库失败: {}", e)))?
+            .ok_or_else(|| CameraError::Config("更新失败".into()))?;
+
+        let updated_config = self.get_camera(id).await?;
+
+        // Update memory if camera is loaded
+        if let Some(mut managed) = self.cameras.get_mut(&id) {
+            managed.config = updated_config.clone();
+        }
+
+        tracing::info!("Updated camera {} (id: {})", updated_config.name(), id);
+        Ok(updated_config)
+    }
+
+    /// Delete camera config (delete from database and remove from memory)
+    pub async fn delete_camera(&self, id: uuid::Uuid) -> Result<(), CameraError> {
+        // Stop stream if active
+        if self.streams.contains_key(&id) {
+            self.stop_stream(&id).await?;
+        }
+
+        // Close camera if opened
+        if self.cameras.contains_key(&id) {
+            self.close_camera(&id).await?;
+        }
+
+        // Delete from database
+        let deleted = crate::database::camera_configs::delete_camera_config(&self.db_conn, id)
+            .await
+            .map_err(|e| CameraError::Config(format!("删除数据库失败: {}", e)))?;
+
+        if !deleted {
+            return Err(CameraError::CameraNotFound(id.to_string()));
+        }
+
+        // Remove from memory
+        self.cameras.remove(&id);
+        self.stream_configs.remove(&id);
+
+        tracing::info!("Deleted camera (id: {})", id);
+        Ok(())
+    }
+
+    /// Set camera enabled status
+    pub async fn set_camera_enabled(&self, id: uuid::Uuid, enabled: bool) -> Result<CameraConfig, CameraError> {
+        let existing = crate::database::camera_configs::find_camera_config_by_id(&self.db_conn, id)
+            .await
+            .map_err(|e| CameraError::Config(format!("读取数据库失败: {}", e)))?
+            .ok_or_else(|| CameraError::CameraNotFound(id.to_string()))?;
+
+        let active_model = t_camera_configs::ActiveModel {
+            id: ActiveValue::set(id),
+            device_user_id: ActiveValue::set(existing.device_user_id),
+            key: ActiveValue::set(existing.key),
+            serial_number: ActiveValue::set(existing.serial_number),
+            vendor: ActiveValue::set(existing.vendor),
+            model: ActiveValue::set(existing.model),
+            manufacture_info: ActiveValue::set(existing.manufacture_info),
+            device_version: ActiveValue::set(existing.device_version),
+            exposure_time_ms: ActiveValue::set(existing.exposure_time_ms),
+            exposure_auto: ActiveValue::set(existing.exposure_auto),
+            ip_address: ActiveValue::set(existing.ip_address),
+            camera_supplier: ActiveValue::set(existing.camera_supplier),
+            enabled: ActiveValue::set(enabled),
+        };
+
+        crate::database::camera_configs::update_camera_config(&self.db_conn, id, active_model)
+            .await
+            .map_err(|e| CameraError::Config(format!("更新数据库失败: {}", e)))?
+            .ok_or_else(|| CameraError::Config("更新失败".into()))?;
+
+        let updated_config: CameraConfig = self.get_camera(id).await?.into();
+
+        // Update memory or remove if disabled
+        if enabled {
+            if !self.cameras.contains_key(&id) {
+                let managed = ManagedCamera::new(updated_config.clone());
+                self.cameras.insert(id, managed);
+            }
+        } else {
+            // Stop and remove from memory if disabled
+            if self.streams.contains_key(&id) {
+                let _ = self.stop_stream(&id).await;
+            }
+            if self.cameras.contains_key(&id) {
+                let _ = self.close_camera(&id).await;
+                self.cameras.remove(&id);
+            }
+        }
+
+        tracing::info!("Set camera {} enabled: {}", id, enabled);
+        Ok(updated_config)
+    }
+
+    // ==================== Camera Operations ====================
+
+    /// Add camera to memory without database operation (for internal use)
+    pub async fn add_camera_to_memory(&self, config: CameraConfig) -> Result<(), CameraError> {
         if config.id.is_none() {
-            return Err(CameraError::Config("配置错误".into()));
+            return Err(CameraError::Config("配置缺少ID".into()));
         }
 
         let id = config.id.unwrap();
 
         if self.cameras.contains_key(&id) {
-            return Err(CameraError::AddCamera("重复添加".into()));
+            return Err(CameraError::AddCamera("相机已在内存中".into()));
         }
-        let managed = ManagedCamera::new(config.clone());
 
+        let managed = ManagedCamera::new(config.clone());
         self.cameras.insert(id, managed);
 
         tracing::info!(
-            "Added camera {} (config device user id: {}, serial number: {})",
+            "Added camera to memory {} (key: {}, serial: {})",
+            config.name(),
             config.key.unwrap_or_default(),
-            config.device_user_id.unwrap_or_default(),
-            config.serial_number.unwrap_or_default(),
+            config.serial_number.unwrap_or_default()
         );
 
         Ok(())
@@ -122,7 +349,7 @@ impl CameraManager {
 
         let mut managed_camera = managed.camera.lock().await;
 
-        if let Some(camera) = managed.camera.lock().await.as_ref() {
+        if let Some(camera) = managed_camera.as_ref() {
             if camera.is_opened() {
                 tracing::warn!(
                     "Camera {} (id {}) is already opened",
@@ -131,15 +358,13 @@ impl CameraManager {
                 );
                 return Ok(());
             }
-            let cam = create_camera(&managed.config)?;
-            cam.open()?;
-
-            *managed_camera = Some(cam);
-
-            tracing::info!("Opened camera {} (id {})", managed.config.name(), id);
-        } else {
-            return Err(CameraError::OpenError("相机创建失败".into()));
         }
+
+        let cam = create_camera(&managed.config)?;
+        cam.open()?;
+        *managed_camera = Some(cam);
+
+        tracing::info!("Opened camera {} (id {})", managed.config.name(), id);
         Ok(())
     }
 
@@ -164,18 +389,14 @@ impl CameraManager {
             .ok_or_else(|| CameraError::CameraNotFound(id.to_string()))?;
 
         let frame_rx = if let Some(camera) = managed.camera.lock().await.as_mut() {
-            // Set grab mode
             camera.set_grab_mode(mode);
 
             if !camera.is_opened() {
                 return Err(CameraError::NotOpened(id.to_string()));
             }
-            // Create frame channel
+
             let frame_rx = camera.create_frame_channel();
-
-            // Start grabbing
             camera.start_grab()?;
-
             frame_rx
         } else {
             return Err(CameraError::NotOpened(id.to_string()));
@@ -295,6 +516,12 @@ impl CameraManager {
         }
         false
     }
+
+    pub fn is_camera_loaded(&self, id: &uuid::Uuid) -> bool {
+        self.cameras.contains_key(id)
+    }
+
+    // ==================== Stream Operations ====================
 
     pub async fn get_stream(
         &self,

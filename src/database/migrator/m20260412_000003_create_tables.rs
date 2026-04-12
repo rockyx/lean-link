@@ -103,6 +103,7 @@ impl MigrationTrait for Migration {
 
 #[derive(Iden)]
 enum ModbusConfigs {
+    #[iden = "t_modbus_configs"]
     Table,
     Id,
     Type,
@@ -116,6 +117,7 @@ enum ModbusConfigs {
 
 #[derive(Iden)]
 enum SerialportConfigs {
+    #[iden = "t_serialport_configs"]
     Table,
     Id,
 }

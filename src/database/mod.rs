@@ -7,3 +7,5 @@ pub mod settings;
 pub mod modbus_configs;
 #[cfg(feature = "serialport")]
 pub mod serialport_configs;
+#[cfg(feature = "industry-camera")]
+pub mod camera_configs;

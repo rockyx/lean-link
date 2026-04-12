@@ -1,4 +1,4 @@
-use std::{fmt::Display, time::Duration};
+use std::{fmt::Display, str::FromStr, time::Duration};
 
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
@@ -6,8 +6,6 @@ use tokio::sync::mpsc;
 mod inner;
 pub mod manager;
 pub mod stream;
-#[cfg(feature = "web")]
-pub mod rest;
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub enum CameraSupplier {
@@ -18,6 +16,17 @@ impl Display for CameraSupplier {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             CameraSupplier::IMV => write!(f, "IMV")
+        }
+    }
+}
+
+impl FromStr for CameraSupplier {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_uppercase().as_str() {
+            "IMV" => Ok(CameraSupplier::IMV),
+            _ => Err(format!("Unknown camera supplier: {}", s)),
         }
     }
 }
@@ -221,6 +230,46 @@ impl CameraConfig {
 
     pub fn gen_id(&mut self) {
         self.id = Some(uuid::Uuid::new_v4());
+    }
+}
+
+impl From<crate::database::entity::t_camera_configs::Model> for CameraConfig {
+    fn from(model: crate::database::entity::t_camera_configs::Model) -> Self {
+        Self {
+            id: Some(model.id),
+            device_user_id: model.device_user_id,
+            key: model.key,
+            serial_number: model.serial_number,
+            vendor: model.vendor,
+            model: model.model,
+            manufacture_info: model.manufacture_info,
+            device_version: model.device_version,
+            exposure_time_ms: model.exposure_time_ms,
+            exposure_auto: model.exposure_auto,
+            ip_address: model.ip_address,
+            camera_supplier: CameraSupplier::from_str(&model.camera_supplier).unwrap_or(CameraSupplier::IMV),
+        }
+    }
+}
+
+impl From<CameraConfig> for crate::database::entity::t_camera_configs::ActiveModel {
+    fn from(config: CameraConfig) -> Self {
+        use sea_orm::ActiveValue;
+        crate::database::entity::t_camera_configs::ActiveModel {
+            id: ActiveValue::set(config.id.unwrap_or_else(uuid::Uuid::new_v4)),
+            device_user_id: ActiveValue::set(config.device_user_id),
+            key: ActiveValue::set(config.key),
+            serial_number: ActiveValue::set(config.serial_number),
+            vendor: ActiveValue::set(config.vendor),
+            model: ActiveValue::set(config.model),
+            manufacture_info: ActiveValue::set(config.manufacture_info),
+            device_version: ActiveValue::set(config.device_version),
+            exposure_time_ms: ActiveValue::set(config.exposure_time_ms),
+            exposure_auto: ActiveValue::set(config.exposure_auto),
+            ip_address: ActiveValue::set(config.ip_address),
+            camera_supplier: ActiveValue::set(config.camera_supplier.to_string()),
+            enabled: ActiveValue::set(true),
+        }
     }
 }
 

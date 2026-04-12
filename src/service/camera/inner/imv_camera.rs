@@ -58,11 +58,6 @@ impl IMVCameraBuilder {
         self
     }
 
-    pub fn with_index(mut self, index: u32) -> Self {
-        self.index = index;
-        self
-    }
-
     pub fn with_camera_key(mut self, camera_key: &str) -> Self {
         self.camera_key = camera_key.into();
         self

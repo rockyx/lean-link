@@ -17,3 +17,5 @@ pub use super::t_inspection_statistics::Entity as TInspectionStatistics;
 pub use super::t_modbus_configs::Entity as TModbusConfigs;
 #[cfg(feature = "serialport")]
 pub use super::t_serialport_configs::Entity as TSerialportConfigs;
+#[cfg(feature = "industry-camera")]
+pub use super::t_camera_configs::Entity as TCameraConfigs;

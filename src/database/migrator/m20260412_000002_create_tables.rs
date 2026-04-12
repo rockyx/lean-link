@@ -85,6 +85,7 @@ impl MigrationTrait for Migration {
 
 #[derive(Iden)]
 enum SerialportConfigs {
+    #[iden = "t_serialport_configs"]
     Table,
     Id,
     Path,
