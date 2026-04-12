@@ -13,6 +13,8 @@ pub mod modbus;
 pub mod serialport;
 #[cfg(feature = "industry-camera")]
 pub mod camera;
+#[cfg(feature = "inspection")]
+pub mod inspection;
 
 #[derive(Serialize, Deserialize)]
 #[repr(u32)]
