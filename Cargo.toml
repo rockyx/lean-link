@@ -114,3 +114,11 @@ all = [
     "socket",
     "inspection",
 ]
+
+# Release optimization profile
+[profile.release]
+opt-level = 3          # Maximum optimization
+lto = true             # Link-time optimization for smaller binaries
+codegen-units = 1      # Better optimization at cost of compile time
+strip = true           # Strip symbols to reduce binary size
+panic = "abort"       # Smaller panic runtime

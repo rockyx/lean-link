@@ -1,6 +1,13 @@
 use crate::config::ServerConfig;
+#[cfg(feature = "industry-camera")]
+use crate::service::camera::manager::{ArcCameraManager, CameraManager};
+#[cfg(feature = "inspection")]
+use crate::service::inspection::{
+    ArcInspectionManager, InspectionManager,
+    manager::{ArcStationManager, StationManager},
+};
 #[cfg(feature = "web")]
-use crate::service::websocket::{WebSocketMessage, WebSocketServer};
+use crate::service::websocket::{ArcWebSocketServer, WebSocketMessage, WebSocketServer};
 use sea_orm::{Database, DatabaseConnection};
 #[cfg(feature = "web")]
 use tokio::sync::mpsc::Receiver;
@@ -122,62 +129,28 @@ impl AppStateBuilder {
         }
 
         if self.load_config {
-            let app_name = self.app_name.as_ref()
-                .ok_or_else(|| std::io::Error::new(
+            let app_name = self.app_name.as_ref().ok_or_else(|| {
+                std::io::Error::new(
                     std::io::ErrorKind::InvalidInput,
                     "App name must be provided when load_config is true",
-                ))?;
+                )
+            })?;
             AppState::new(app_name.as_str()).await
         } else {
-            let server_config = self.server_config.as_ref()
-                .ok_or_else(|| std::io::Error::new(
+            let server_config = self.server_config.as_ref().ok_or_else(|| {
+                std::io::Error::new(
                     std::io::ErrorKind::InvalidInput,
                     "Server config must be provided when load_config is false",
-                ))?;
-
-            let db_conn = Database::connect(server_config.database.url.clone())
-                .await
-                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
-
-            #[cfg(feature = "web")]
-            let web_socket_server = WebSocketServer::new(
-                server_config.web_socket.clone(),
-                server_config.sys.clone(),
-            );
-
-            #[cfg(target_os = "linux")]
-            {
-                use crate::utils::datetime::set_local_time_from_ds1307;
-                use crate::utils::i2c::path_to_i2c_bus;
-
-                let sync_time_from_rtc = server_config.sys.sync_time_from_rtc;
-                let rtc_i2c_dev = server_config.sys.rtc_i2c_dev.clone();
-                let rtc_i2c_addr = server_config.sys.rtc_i2c_addr;
-                if sync_time_from_rtc {
-                    // sync system time from RTC
-                    match path_to_i2c_bus(&rtc_i2c_dev) {
-                        Ok(bus) => {
-                            let output = set_local_time_from_ds1307(bus, rtc_i2c_addr);
-                            tracing::info!("syncSysTime command output: {:?}", output);
-                        }
-                        Err(e) => {
-                            tracing::error!("Failed to sync time from RTC: {}", e);
-                        }
-                    }
-                }
-            }
-
-            Ok(AppState {
-                db_conn,
-                server_config: server_config.clone(),
-                server_name: self
-                    .app_name
+                )
+            })?;
+            AppState::new_with_config(
+                server_config.clone(),
+                self.app_name
                     .as_ref()
                     .map(|s| s.to_string())
                     .unwrap_or_else(|| "lean-link-service".to_string()),
-                #[cfg(feature = "web")]
-                ws_server: web_socket_server,
-            })
+            )
+            .await
         }
     }
 }
@@ -187,19 +160,33 @@ pub struct AppState {
     pub server_config: ServerConfig,
     pub server_name: String,
     #[cfg(feature = "web")]
-    pub ws_server: WebSocketServer,
+    pub ws_server: ArcWebSocketServer,
+    #[cfg(feature = "industry-camera")]
+    pub camera_manager: ArcCameraManager,
+    #[cfg(feature = "inspection")]
+    pub station_manager: ArcStationManager,
+    #[cfg(feature = "inspection")]
+    pub inspection_manager: ArcInspectionManager,
 }
 
 impl AppState {
-    async fn new(server_name: &str) -> std::io::Result<Self> {
-        let server_config = config::load_config(server_name)?;
+    async fn new<S: Into<String>>(server_name: S) -> std::io::Result<Self> {
+        let app_name = server_name.into();
+        let server_config = config::load_config(&app_name)?;
+        Self::new_with_config(server_config, app_name).await
+    }
+
+    async fn new_with_config<S: Into<String>>(
+        server_config: ServerConfig,
+        server_name: S,
+    ) -> std::io::Result<Self> {
         let db_conn = Database::connect(server_config.database.url.clone())
             .await
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
 
         #[cfg(feature = "web")]
         let web_socket_server =
-            WebSocketServer::new(server_config.web_socket.clone(), server_config.sys.clone());
+            WebSocketServer::new_arc(server_config.web_socket.clone(), server_config.sys.clone());
 
         #[cfg(target_os = "linux")]
         {
@@ -223,12 +210,28 @@ impl AppState {
             }
         }
 
+        #[cfg(feature = "industry-camera")]
+        let camera_manager = CameraManager::new_arc(db_conn.clone());
+
+        #[cfg(feature = "inspection")]
+        let station_manager = StationManager::new_arc(db_conn.clone());
+
+        #[cfg(feature = "inspection")]
+        let inspection_manager =
+            InspectionManager::new_arc(camera_manager.clone(), station_manager.clone());
+
         Ok(Self {
             db_conn,
             server_config,
-            server_name: server_name.to_string(),
+            server_name: server_name.into(),
             #[cfg(feature = "web")]
             ws_server: web_socket_server,
+            #[cfg(feature = "industry-camera")]
+            camera_manager,
+            #[cfg(feature = "inspection")]
+            station_manager,
+            #[cfg(feature = "inspection")]
+            inspection_manager,
         })
     }
 

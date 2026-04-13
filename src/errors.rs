@@ -42,6 +42,9 @@ pub enum Error {
     #[cfg(feature = "web")]
     #[error("BadRequest Error: {0} - {1}")]
     BadRequest(ErrorCode, String),
+    #[cfg(feature = "inspection")]
+    #[error("Inspection Error: {0}")]
+    Inspection(#[from] crate::service::inspection::InspectionError),
 }
 
 #[cfg(feature = "web")]

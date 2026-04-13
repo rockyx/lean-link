@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 #[cfg(feature = "inspection")]
 pub use crate::database::entity::t_inspection_stations::TriggerMode;
@@ -235,7 +236,7 @@ impl RoiShape {
 #[serde(rename_all = "camelCase")]
 pub struct RoiConfig {
     /// Unique ROI identifier
-    pub id: String,
+    pub id: Uuid,
     /// Human-readable name
     pub name: String,
     /// Shape definition
@@ -250,13 +251,13 @@ pub struct RoiConfig {
 impl RoiConfig {
     /// Create a new ROI configuration
     pub fn new(
-        id: impl Into<String>,
+        id: Uuid,
         name: impl Into<String>,
         shape: RoiShape,
         purpose: RoiPurpose,
     ) -> Self {
         Self {
-            id: id.into(),
+            id,
             name: name.into(),
             shape,
             purpose,
@@ -266,7 +267,7 @@ impl RoiConfig {
 
     /// Create a detection rectangle ROI
     pub fn detection_rect(
-        id: impl Into<String>,
+        id: Uuid,
         name: impl Into<String>,
         x: f32,
         y: f32,
@@ -353,7 +354,7 @@ impl DetectionType {
 #[serde(rename_all = "camelCase")]
 pub struct StationConfig {
     /// Unique station identifier
-    pub id: String,
+    pub id: Uuid,
 
     /// Human-readable station name
     pub name: String,
@@ -387,7 +388,7 @@ pub struct StationConfig {
     /// Serial port path for serial trigger mode (optional)
     /// Only used when trigger_mode is Serial
     #[serde(default)]
-    pub serial_port: Option<String>,
+    pub serial_port: Option<Uuid>,
 }
 
 impl StationConfig {
@@ -418,9 +419,9 @@ impl StationConfig {
     }
 
     /// Remove an ROI by id
-    pub fn remove_roi(&mut self, id: &str) -> bool {
+    pub fn remove_roi(&mut self, id: &Uuid) -> bool {
         let len_before = self.rois.len();
-        self.rois.retain(|r| r.id != id);
+        self.rois.retain(|r| r.id != *id);
         self.rois.len() != len_before
     }
 }
@@ -534,8 +535,9 @@ mod tests {
 
     #[test]
     fn test_roi_config_creation() {
-        let roi = RoiConfig::detection_rect("roi_1", "检测区1", 0.1, 0.2, 0.3, 0.4);
-        assert_eq!(roi.id, "roi_1");
+        let roi_id = uuid::Uuid::now_v7();
+        let roi = RoiConfig::detection_rect(roi_id.clone(), "检测区1", 0.1, 0.2, 0.3, 0.4);
+        assert_eq!(roi.id, roi_id);
         assert_eq!(roi.name, "检测区1");
         assert!(roi.enabled);
         assert_eq!(roi.purpose, RoiPurpose::Detection);
@@ -544,7 +546,7 @@ mod tests {
     #[test]
     fn test_station_config_roi_management() {
         let mut config = StationConfig {
-            id: "station_1".to_string(),
+            id: uuid::Uuid::now_v7(),
             name: "测试站".to_string(),
             camera_id: uuid::Uuid::nil(),
             trigger_mode: TriggerMode::default(),
@@ -557,13 +559,15 @@ mod tests {
         };
 
         // Add ROI
-        let roi1 = RoiConfig::detection_rect("roi_1", "区域1", 0.1, 0.1, 0.2, 0.2);
+        let roi1_id = uuid::Uuid::now_v7();
+        let roi1 = RoiConfig::detection_rect(roi1_id.clone(), "区域1", 0.1, 0.1, 0.2, 0.2);
         config.set_roi(roi1);
         assert_eq!(config.rois.len(), 1);
 
         // Add another ROI
+        let roi2_id = uuid::Uuid::now_v7();
         let roi2 = RoiConfig::new(
-            "roi_2",
+            roi2_id.clone(),
             "排除区",
             RoiShape::polygon(vec![
                 Point::new(0.5, 0.5),
@@ -576,7 +580,7 @@ mod tests {
         assert_eq!(config.rois.len(), 2);
 
         // Update existing ROI
-        let roi1_updated = RoiConfig::detection_rect("roi_1", "更新区域1", 0.2, 0.2, 0.3, 0.3);
+        let roi1_updated = RoiConfig::detection_rect(roi2_id, "更新区域1", 0.2, 0.2, 0.3, 0.3);
         config.set_roi(roi1_updated);
         assert_eq!(config.rois.len(), 2); // Still 2, not 3
         assert_eq!(
@@ -585,14 +589,14 @@ mod tests {
         );
 
         // Remove ROI
-        assert!(config.remove_roi("roi_1"));
+        assert!(config.remove_roi(&roi1_id));
         assert_eq!(config.rois.len(), 1);
     }
 
     #[test]
     fn test_station_config_legacy_roi_compatibility() {
         let config = StationConfig {
-            id: "station_1".to_string(),
+            id: uuid::Uuid::now_v7(),
             name: "测试站".to_string(),
             camera_id: uuid::Uuid::nil(),
             trigger_mode: TriggerMode::default(),
@@ -611,7 +615,8 @@ mod tests {
 
     #[test]
     fn test_roi_serialization() {
-        let roi = RoiConfig::detection_rect("roi_1", "检测区", 0.1, 0.2, 0.3, 0.4);
+        let roi_id = uuid::Uuid::now_v7();
+        let roi = RoiConfig::detection_rect(roi_id.clone(), "检测区", 0.1, 0.2, 0.3, 0.4);
         let json = serde_json::to_string(&roi).unwrap();
         assert!(json.contains("\"id\":\"roi_1\""));
         assert!(json.contains("\"type\":\"Rectangle\"")); // PascalCase

@@ -5,6 +5,7 @@
 use std::ffi::{CStr, CString};
 use std::os::raw::c_void;
 use std::ptr::null_mut;
+use std::str::FromStr;
 
 use bytes::BufMut;
 use tokio::sync::mpsc;
@@ -35,22 +36,23 @@ impl IMVCameraBuilder {
     }
 
     pub fn new_with_config(config: &CameraConfig) -> Self {
+        tracing::debug!("camera config: {:?}", config);
         let builder = Self::new();
-        if let Some(ref ip_address) = config.ip_address {
+        if let Some(ref key) = config.key {
             return builder
-                .with_ip_address(ip_address)
-                .with_mode(crate::ffi::imv::_IMV_ECreateHandleMode_modeByIPAddress);
+                .with_camera_key(key)
+                .with_mode(crate::ffi::imv::_IMV_ECreateHandleMode_modeByCameraKey);
         } else if let Some(ref device_user_id) = config.device_user_id {
             return builder
                 .with_device_user_id(device_user_id)
                 .with_mode(crate::ffi::imv::_IMV_ECreateHandleMode_modeByDeviceUserID);
-        } else if let Some(ref key) = config.key {
+        } else if let Some(ref ip_address) = config.ip_address {
             return builder
-                .with_camera_key(key)
-                .with_mode(crate::ffi::imv::_IMV_ECreateHandleMode_modeByCameraKey);
+                .with_ip_address(ip_address)
+                .with_mode(crate::ffi::imv::_IMV_ECreateHandleMode_modeByIPAddress);
         }
 
-        return builder
+        return builder;
     }
 
     pub fn with_mode(mut self, mode: IMV_ECreateHandleMode) -> Self {
@@ -74,13 +76,13 @@ impl IMVCameraBuilder {
     }
 
     pub fn build(&self) -> Result<IMVCamera, CameraError> {
-        get_camera_list()?;
         let mut camera = IMVCamera {
             handle: null_mut(),
             grab_mode: GrabMode::Continuous,
             exposure_auto: false,
             exposure_time: std::time::Duration::from_millis(1000),
             frame_sender: None,
+            runtime_handle: None,
         };
 
         match self.mode {
@@ -216,6 +218,7 @@ pub struct IMVCamera {
     pub exposure_auto: bool,
     pub exposure_time: std::time::Duration,
     pub frame_sender: Option<mpsc::Sender<CameraFrame>>,
+    runtime_handle: Option<tokio::runtime::Handle>,
 }
 
 unsafe impl Send for IMVCamera {}
@@ -266,7 +269,7 @@ impl IndustryCamera for IMVCamera {
         true
     }
 
-    fn stop_grab(&self) -> Result<(), CameraError> {
+    fn stop_grab(&mut self) -> Result<(), CameraError> {
         if !self.is_opened() {
             return Ok(());
         }
@@ -286,16 +289,25 @@ impl IndustryCamera for IMVCamera {
 
             let _ = IMV_ClearFrameBuffer(self.handle);
         }
+        self.frame_sender = None;
         Ok(())
     }
 
     fn start_grab(&mut self) -> Result<(), CameraError> {
         if !self.is_opened() {
-            return Err(CameraError::NotOpened(format!("{:?}", IMV_ERROR)));
+            return Err(CameraError::NotOpened(format!(
+                "start_grab {:?}",
+                IMV_ERROR
+            )));
         }
 
         if self.is_grabbing() {
             return Ok(());
+        }
+
+        // 捕获当前 Tokio 运行时句柄，供 C 回调线程使用
+        if self.runtime_handle.is_none() {
+            self.runtime_handle = tokio::runtime::Handle::try_current().ok();
         }
 
         self.sync_grab_mode()?;
@@ -348,7 +360,7 @@ impl IndustryCamera for IMVCamera {
         Ok(FrameSize { width, height })
     }
 
-    fn trigger_one_frame(&self) -> Result<(), CameraError> {
+    fn trigger_one_frame(&self) -> Result<CameraFrame, CameraError> {
         unsafe {
             // Clear frame buffer
             let ret = IMV_ClearFrameBuffer(self.handle);
@@ -361,6 +373,7 @@ impl IndustryCamera for IMVCamera {
         self.execute_command_feature("TriggerSoftware")?;
 
         let mut try_counter = Some(0);
+        let mut ret = IMV_OK;
 
         while let Some(counter) = try_counter {
             if counter > 3 {
@@ -371,16 +384,17 @@ impl IndustryCamera for IMVCamera {
 
             let mut frame = IMV_Frame::default();
             unsafe {
-                let ret = IMV_GetFrame(self.handle, &mut frame, 1000);
+                ret = IMV_GetFrame(self.handle, &mut frame, 1000);
                 if ret != IMV_OK {
                     continue;
                 }
             }
 
             self.handle_frame(frame.into());
+            return Ok(frame.into());
         }
 
-        Ok(())
+        Err(CameraError::GrabError(format!("{}", ret)))
     }
 
     fn create_frame_channel(&mut self) -> mpsc::Receiver<CameraFrame> {
@@ -408,13 +422,20 @@ impl IMVCamera {
         feature_name: &str,
         enum_symbol: &str,
     ) -> Result<(), CameraError> {
-        let feature_name_ptr = feature_name.as_ptr() as *const i8;
-        let enum_symbol_ptr = enum_symbol.as_ptr() as *const i8;
-
         unsafe {
+            let feature_name_c_str = CString::from_str(feature_name)
+                .map_err(|e| CameraError::SystemError(format!("{:?}", e)))?;
+            let enum_symbol_c_str = CString::from_str(enum_symbol)
+                .map_err(|e| CameraError::SystemError(format!("{:?}", e)))?;
+            let feature_name_ptr = feature_name_c_str.as_ptr() as *const i8;
+            let enum_symbol_ptr = enum_symbol_c_str.as_ptr() as *const i8;
+
             let ret = IMV_SetEnumFeatureSymbol(self.handle, feature_name_ptr, enum_symbol_ptr);
             if ret != IMV_OK {
-                return Err(CameraError::Config(format!("{:?}", ret)));
+                return Err(CameraError::Config(format!(
+                    "设置枚举属性: {} 枚举值: {} {:?}",
+                    feature_name, enum_symbol, ret
+                )));
             }
         }
 
@@ -446,10 +467,15 @@ impl IMVCamera {
         enum_value: u64,
     ) -> Result<(), CameraError> {
         unsafe {
-            let feature_name_ptr = feature_name.as_ptr() as *const i8;
+            let feature_name_c_str = CString::from_str(feature_name)
+                .map_err(|e| CameraError::SystemError(format!("{:?}", e)))?;
+            let feature_name_ptr = feature_name_c_str.as_ptr() as *const i8;
             let ret = IMV_SetEnumFeatureValue(self.handle, feature_name_ptr, enum_value);
             if ret != IMV_OK {
-                return Err(CameraError::Config(format!("{:?}", ret)));
+                return Err(CameraError::Config(format!(
+                    "设置枚举属性值: {} 枚举值: {} {:?}",
+                    feature_name, enum_value, ret
+                )));
             }
         }
 
@@ -467,11 +493,16 @@ impl IMVCamera {
 
     fn get_double_feature_value(&self, feature_name: &str) -> Result<f64, CameraError> {
         unsafe {
-            let feature_name_ptr = feature_name.as_ptr() as *const i8;
+            let feature_name_c_str = CString::from_str(feature_name)
+                .map_err(|e| CameraError::SystemError(format!("{:?}", e)))?;
+            let feature_name_ptr = feature_name_c_str.as_ptr() as *const i8;
             let mut value = 0.0;
             let ret = IMV_GetDoubleFeatureValue(self.handle, feature_name_ptr, &mut value);
             if ret != IMV_OK {
-                return Err(CameraError::Config(format!("{:?}", ret)));
+                return Err(CameraError::Config(format!(
+                    "获取浮点属性值: {} {:?}",
+                    feature_name, ret
+                )));
             }
 
             Ok(value)
@@ -480,11 +511,16 @@ impl IMVCamera {
 
     fn get_double_feature_min(&self, feature_name: &str) -> Result<f64, CameraError> {
         unsafe {
-            let feature_name_ptr = feature_name.as_ptr() as *const i8;
+            let feature_name_c_str = CString::from_str(feature_name)
+                .map_err(|e| CameraError::SystemError(format!("{:?}", e)))?;
+            let feature_name_ptr = feature_name_c_str.as_ptr() as *const i8;
             let mut value = 0.0;
             let ret = IMV_GetDoubleFeatureMin(self.handle, feature_name_ptr, &mut value);
             if ret != IMV_OK {
-                return Err(CameraError::Config(format!("{:?}", ret)));
+                return Err(CameraError::Config(format!(
+                    "获取浮点属性可设的最小值: {} {:?}",
+                    feature_name, ret
+                )));
             }
 
             Ok(value)
@@ -493,11 +529,16 @@ impl IMVCamera {
 
     fn get_double_feature_max(&self, feature_name: &str) -> Result<f64, CameraError> {
         unsafe {
-            let feature_name_ptr = feature_name.as_ptr() as *const i8;
+            let feature_name_c_str = CString::from_str(feature_name)
+                .map_err(|e| CameraError::SystemError(format!("{:?}", e)))?;
+            let feature_name_ptr = feature_name_c_str.as_ptr() as *const i8;
             let mut value = 0.0;
             let ret = IMV_GetDoubleFeatureMax(self.handle, feature_name_ptr, &mut value);
             if ret != IMV_OK {
-                return Err(CameraError::Config(format!("{:?}", ret)));
+                return Err(CameraError::Config(format!(
+                    "获取浮点属性可设的最大值: {} {:?}",
+                    feature_name, ret
+                )));
             }
 
             Ok(value)
@@ -510,10 +551,15 @@ impl IMVCamera {
         double_value: f64,
     ) -> Result<(), CameraError> {
         unsafe {
-            let feature_name_ptr = feature_name.as_ptr() as *const i8;
+            let feature_name_c_ptr = CString::from_str(feature_name)
+                .map_err(|e| CameraError::SystemError(format!("{:?}", e)))?;
+            let feature_name_ptr = feature_name_c_ptr.as_ptr() as *const i8;
             let ret = IMV_SetDoubleFeatureValue(self.handle, feature_name_ptr, double_value);
             if ret != IMV_OK {
-                return Err(CameraError::Config(format!("{:?}", ret)));
+                return Err(CameraError::Config(format!(
+                    "设置浮点属性值: {} 值: {} {:?}",
+                    feature_name, double_value, ret
+                )));
             }
 
             Ok(())
@@ -542,27 +588,33 @@ impl IMVCamera {
     }
 
     fn handle_frame(&self, frame: CameraFrame) {
-        let frame_sender = self.frame_sender.clone();
-        if frame_sender.is_none() {
-            return;
-        }
-
-        let frame_sender = frame_sender.unwrap();
-        tokio::spawn(async move {
-            let result = frame_sender.send(frame).await;
-            if result.is_err() {
-                tracing::error!("send frame to channel failed: {:?}", result.unwrap_err());
+        if let Some(sender) = &self.frame_sender {
+            if let Some(handle) = &self.runtime_handle {
+                let sender_clone = sender.clone();
+                handle.spawn(async move {
+                    let result = sender_clone.send(frame).await;
+                    if result.is_err() {
+                        tracing::error!("send frame to channel failed: {:?}", result.unwrap_err());
+                    }
+                });
+            } else {
+                tracing::error!("No tokio runtime available");
             }
-        });
+        }
     }
 
     fn get_int_feature_value(&self, feature_name: &str) -> Result<i64, CameraError> {
         unsafe {
-            let feature_name_ptr = feature_name.as_ptr() as *const i8;
+            let feature_name_c_str = CString::from_str(feature_name)
+                .map_err(|e| CameraError::SystemError(format!("{:?}", e)))?;
+            let feature_name_ptr = feature_name_c_str.as_ptr() as *const i8;
             let mut value: i64 = 0;
             let ret = IMV_GetIntFeatureValue(self.handle, feature_name_ptr, &mut value);
             if ret != IMV_OK {
-                return Err(CameraError::Config(format!("{:?}", ret)));
+                return Err(CameraError::Config(format!(
+                    "获取整型属性值: {} {:?}",
+                    feature_name, ret
+                )));
             }
 
             Ok(value)
@@ -571,10 +623,15 @@ impl IMVCamera {
 
     fn execute_command_feature(&self, feature_name: &str) -> Result<(), CameraError> {
         unsafe {
-            let feature_name_ptr = feature_name.as_ptr() as *const i8;
+            let feature_name_c_str = CString::from_str(feature_name)
+                .map_err(|e| CameraError::SystemError(format!("{:?}", e)))?;
+            let feature_name_ptr = feature_name_c_str.as_ptr() as *const i8;
             let ret = IMV_ExecuteCommandFeature(self.handle, feature_name_ptr);
             if ret != IMV_OK {
-                return Err(CameraError::Config(format!("{:?}", ret)));
+                return Err(CameraError::Config(format!(
+                    "执行命令属性: {} {:?}",
+                    feature_name, ret
+                )));
             }
 
             Ok(())

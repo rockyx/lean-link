@@ -45,7 +45,7 @@ pub struct CameraManager {
 }
 
 impl CameraManager {
-    pub fn new(db_conn: DatabaseConnection) -> Self {
+    fn new(db_conn: DatabaseConnection) -> Self {
         Self {
             db_conn,
             cameras: DashMap::new(),
@@ -53,6 +53,10 @@ impl CameraManager {
             streams: DashMap::new(),
             stream_configs: DashMap::new(),
         }
+    }
+
+    pub fn new_arc(db_conn: DatabaseConnection) -> ArcCameraManager {
+        Arc::new(Self::new(db_conn))
     }
 
     // ==================== Camera Enumeration ====================
@@ -89,9 +93,10 @@ impl CameraManager {
     pub async fn initialize_from_database(&self) -> Result<(), CameraError> {
         self.enumerate_cameras().await?;
 
-        let configs = crate::database::camera_configs::find_camera_configs_by_enabled(&self.db_conn, true)
-            .await
-            .map_err(|e| CameraError::Config(format!("读取数据库失败: {}", e)))?;
+        let configs =
+            crate::database::camera_configs::find_camera_configs_by_enabled(&self.db_conn, true)
+                .await
+                .map_err(|e| CameraError::Config(format!("读取数据库失败: {}", e)))?;
 
         for model in configs {
             let config: CameraConfig = model.into();
@@ -169,9 +174,10 @@ impl CameraManager {
         enabled: Option<bool>,
     ) -> Result<crate::database::entity::PageResult<CameraConfig>, CameraError> {
         let page_result = if let Some(en) = enabled {
-            let records = crate::database::camera_configs::find_camera_configs_by_enabled(&self.db_conn, en)
-                .await
-                .map_err(|e| CameraError::Config(format!("读取数据库失败: {}", e)))?;
+            let records =
+                crate::database::camera_configs::find_camera_configs_by_enabled(&self.db_conn, en)
+                    .await
+                    .map_err(|e| CameraError::Config(format!("读取数据库失败: {}", e)))?;
             crate::database::entity::PageResult {
                 records: records.into_iter().map(|m| m.into()).collect(),
                 page_index: 1,
@@ -180,9 +186,10 @@ impl CameraManager {
                 pages: 1,
             }
         } else {
-            let result = crate::database::camera_configs::page_camera_configs(&self.db_conn, page, size)
-                .await
-                .map_err(|e| CameraError::Config(format!("读取数据库失败: {}", e)))?;
+            let result =
+                crate::database::camera_configs::page_camera_configs(&self.db_conn, page, size)
+                    .await
+                    .map_err(|e| CameraError::Config(format!("读取数据库失败: {}", e)))?;
             crate::database::entity::PageResult {
                 records: result.records.into_iter().map(|m| m.into()).collect(),
                 page_index: result.page_index,
@@ -196,7 +203,11 @@ impl CameraManager {
     }
 
     /// Update camera config (update database and memory)
-    pub async fn update_camera(&self, id: uuid::Uuid, config: CameraConfig) -> Result<CameraConfig, CameraError> {
+    pub async fn update_camera(
+        &self,
+        id: uuid::Uuid,
+        config: CameraConfig,
+    ) -> Result<CameraConfig, CameraError> {
         let existing = crate::database::camera_configs::find_camera_config_by_id(&self.db_conn, id)
             .await
             .map_err(|e| CameraError::Config(format!("读取数据库失败: {}", e)))?
@@ -209,7 +220,9 @@ impl CameraManager {
             serial_number: ActiveValue::set(config.serial_number.or(existing.serial_number)),
             vendor: ActiveValue::set(config.vendor.or(existing.vendor)),
             model: ActiveValue::set(config.model.or(existing.model)),
-            manufacture_info: ActiveValue::set(config.manufacture_info.or(existing.manufacture_info)),
+            manufacture_info: ActiveValue::set(
+                config.manufacture_info.or(existing.manufacture_info),
+            ),
             device_version: ActiveValue::set(config.device_version.or(existing.device_version)),
             exposure_time_ms: ActiveValue::set(config.exposure_time_ms),
             exposure_auto: ActiveValue::set(config.exposure_auto),
@@ -264,7 +277,11 @@ impl CameraManager {
     }
 
     /// Set camera enabled status
-    pub async fn set_camera_enabled(&self, id: uuid::Uuid, enabled: bool) -> Result<CameraConfig, CameraError> {
+    pub async fn set_camera_enabled(
+        &self,
+        id: uuid::Uuid,
+        enabled: bool,
+    ) -> Result<CameraConfig, CameraError> {
         let existing = crate::database::camera_configs::find_camera_config_by_id(&self.db_conn, id)
             .await
             .map_err(|e| CameraError::Config(format!("读取数据库失败: {}", e)))?
@@ -440,7 +457,7 @@ impl CameraManager {
         Ok(())
     }
 
-    pub async fn trigger_frame(&self, id: &uuid::Uuid) -> Result<(), CameraError> {
+    pub async fn trigger_frame(&self, id: &uuid::Uuid) -> Result<CameraFrame, CameraError> {
         let managed = self
             .cameras
             .get(id)
@@ -451,10 +468,10 @@ impl CameraManager {
         }
 
         if let Some(camera) = managed.camera.lock().await.as_ref() {
-            camera.trigger_one_frame()?;
+            return camera.trigger_one_frame();
         }
 
-        Ok(())
+        Err(CameraError::CameraNotFound(id.to_string()))
     }
 
     pub async fn get_frame_size(&self, id: &uuid::Uuid) -> Result<FrameSize, CameraError> {
@@ -489,6 +506,7 @@ impl CameraManager {
             }
             managed.is_grabbing = false;
         }
+        self.stop_stream(id).await?;
         tracing::info!("Closed camera {} (id {})", managed.config.name(), id);
 
         Ok(())
@@ -573,7 +591,8 @@ impl CameraManager {
 
     pub async fn stop_stream(&self, id: &uuid::Uuid) -> Result<(), CameraError> {
         if !self.streams.contains_key(id) {
-            return Err(CameraError::CameraNotFound(format!("无此相机 {}", id)));
+            tracing::warn!("not camera stream: {}", id);
+            return Ok(());
         }
 
         let stream = self.get_stream(id).await?;
@@ -602,3 +621,5 @@ impl CameraManager {
         self.streams.contains_key(id)
     }
 }
+
+pub type ArcCameraManager = Arc<CameraManager>;

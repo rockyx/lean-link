@@ -118,7 +118,7 @@ pub struct Model {
 
     /// Serial port path for serial trigger mode
     #[sea_orm(column_type = "String(StringLen::N(100))", nullable)]
-    pub serial_port: Option<String>,
+    pub serial_port: Option<Uuid>,
 
     #[serde(serialize_with = "to_local_time")]
     pub created_at: DateTimeWithTimeZone,
@@ -140,6 +140,12 @@ pub enum Relation {
         to = "super::t_camera_configs::Column::Id"
     )]
     Camera,
+    #[sea_orm(
+        belongs_to = "super::t_serialport_configs::Entity",
+        from = "Column::SerialPort",
+        to = "super::t_serialport_configs::Column::Id"
+    )]
+    SerialPort,
 }
 
 impl Related<super::t_station_rois::Entity> for Entity {
@@ -151,6 +157,12 @@ impl Related<super::t_station_rois::Entity> for Entity {
 impl Related<super::t_camera_configs::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::Camera.def()
+    }
+}
+
+impl Related<super::t_serialport_configs::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::SerialPort.def()
     }
 }
 

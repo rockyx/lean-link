@@ -47,7 +47,6 @@ where
     fn into(self) -> Message {
         match serde_json::to_string(&self) {
             Ok(json_str) => {
-                tracing::debug!("send message: {}", json_str);
                 Message::Text(json_str.into())
             }
             Err(e) => {
@@ -73,7 +72,7 @@ pub struct WebSocketServer {
 }
 
 impl WebSocketServer {
-    pub fn new(websocket_config: WebSocketConfig, sys_config: Sys) -> Self {
+    fn new(websocket_config: WebSocketConfig, sys_config: Sys) -> Self {
         let capacity = websocket_config.broadcast_channel_capacity;
         WebSocketServer {
             writer_map: Arc::new(DashMap::new()),
@@ -81,6 +80,10 @@ impl WebSocketServer {
             sys_config,
             broadcast_sender: broadcast::channel(capacity).0,
         }
+    }
+
+    pub fn new_arc(websocket_config: WebSocketConfig, sys_config: Sys) -> ArcWebSocketServer {
+        Arc::new(Self::new(websocket_config, sys_config))
     }
 
     pub async fn start(&self) -> std::io::Result<mpsc::Receiver<WebSocketMessage>> {
@@ -350,3 +353,5 @@ async fn handle_connection(
         }
     }
 }
+
+pub type ArcWebSocketServer = Arc<WebSocketServer>;

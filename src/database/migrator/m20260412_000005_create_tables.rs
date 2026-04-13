@@ -1,3 +1,4 @@
+use sea_orm::DbBackend;
 use sea_orm_migration::prelude::*;
 use sea_orm_migration::sea_query::{ColumnDef, Index, Table};
 
@@ -7,6 +8,7 @@ pub struct Migration;
 #[async_trait::async_trait]
 impl MigrationTrait for Migration {
     async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+        let db_backend = manager.get_database_backend();
         // Create inspection stations table
         manager
             .create_table(
@@ -119,22 +121,14 @@ impl MigrationTrait for Migration {
                             .not_null()
                             .primary_key(),
                     )
-                    .col(
-                        ColumnDef::new(StationRois::StationId)
-                            .uuid()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(StationRois::StationId).uuid().not_null())
                     .col(
                         ColumnDef::new(StationRois::Name)
                             .string()
                             .string_len(100)
                             .not_null(),
                     )
-                    .col(
-                        ColumnDef::new(StationRois::Shape)
-                            .json()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(StationRois::Shape).json().not_null())
                     .col(
                         ColumnDef::new(StationRois::Purpose)
                             .string()
@@ -200,30 +194,31 @@ impl MigrationTrait for Migration {
             )
             .await?;
 
-        // Add foreign key constraint for station_id -> inspection_stations.id
         // Note: SQLite doesn't enforce FK by default, but PostgreSQL/MySQL will
-        manager
-            .create_foreign_key(
-                sea_orm_migration::sea_query::ForeignKey::create()
-                    .name("fk_station_rois_station_id")
-                    .from(StationRois::Table, StationRois::StationId)
-                    .to(InspectionStations::Table, InspectionStations::Id)
-                    .on_delete(sea_orm_migration::sea_query::ForeignKeyAction::Cascade)
-                    .to_owned(),
-            )
-            .await?;
-
-        // Add foreign key constraint for camera_id -> camera_configs.id
-        manager
-            .create_foreign_key(
-                sea_orm_migration::sea_query::ForeignKey::create()
-                    .name("fk_inspection_stations_camera_id")
-                    .from(InspectionStations::Table, InspectionStations::CameraId)
-                    .to(CameraConfigs::Table, CameraConfigs::Id)
-                    .on_delete(sea_orm_migration::sea_query::ForeignKeyAction::Restrict)
-                    .to_owned(),
-            )
-            .await?;
+        if db_backend != DbBackend::Sqlite {
+            // Add foreign key constraint for station_id -> inspection_stations.id
+            manager
+                .create_foreign_key(
+                    sea_orm_migration::sea_query::ForeignKey::create()
+                        .name("fk_station_rois_station_id")
+                        .from(StationRois::Table, StationRois::StationId)
+                        .to(InspectionStations::Table, InspectionStations::Id)
+                        .on_delete(sea_orm_migration::sea_query::ForeignKeyAction::Cascade)
+                        .to_owned(),
+                )
+                .await?;
+            // Add foreign key constraint for camera_id -> camera_configs.id
+            manager
+                .create_foreign_key(
+                    sea_orm_migration::sea_query::ForeignKey::create()
+                        .name("fk_inspection_stations_camera_id")
+                        .from(InspectionStations::Table, InspectionStations::CameraId)
+                        .to(CameraConfigs::Table, CameraConfigs::Id)
+                        .on_delete(sea_orm_migration::sea_query::ForeignKeyAction::Restrict)
+                        .to_owned(),
+                )
+                .await?;
+        }
 
         Ok(())
     }

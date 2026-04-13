@@ -89,6 +89,7 @@ pub mod api {
     };
     use actix_web::{delete, get, post, put, web};
     use sea_orm::ActiveValue;
+    use serialport::SerialPortInfo;
     use uuid::Uuid;
 
     #[post("/create")]
@@ -272,5 +273,13 @@ pub mod api {
                 Err(crate::errors::Error::DbErr(e))
             }
         }
+    }
+
+    #[get("/enumerate")]
+    pub async fn enumerate_serial_ports()
+    -> actix_web::Result<web::Json<WebResponse<Vec<SerialPortInfo>>>, crate::errors::Error> {
+        let ports =
+            serialport::available_ports().map_err(|e| crate::errors::Error::Io(e.into()))?;
+        Ok(WebResponse::with_result(ports).into())
     }
 }

@@ -137,6 +137,7 @@ pub enum CameraControlMessage {
     },
 }
 
+#[derive(Clone, Debug)]
 pub enum StreamEvent {
     Frame(CameraFrame),
     Stop,
@@ -217,6 +218,7 @@ impl ActiveStream {
                             }
                         }
                         None => {
+                            tracing::debug!("stream none");
                             break;
                         }
                     }
@@ -626,7 +628,18 @@ impl ActiveStream {
         let _ = self.event_tx.send(StreamEvent::Stop).await;
     }
 
-    pub async fn trigger_frame(&self, frame: &CameraFrame) {
-        let _ = self.event_tx.send(StreamEvent::Frame(frame.clone()));
+    pub async fn trigger_frame(&self, frame: CameraFrame) {
+        if let Err(e) = self.event_tx.send(StreamEvent::Frame(frame)).await {
+            tracing::error!("trigger_frame error: {:?}", e);
+        }
+    }
+}
+
+impl Drop for ActiveStream {
+    fn drop(&mut self) {
+        let event_tx = self.event_tx.clone();
+        tokio::spawn(async move {
+            let _ = event_tx.send(StreamEvent::Stop).await;
+        });
     }
 }

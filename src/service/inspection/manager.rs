@@ -31,12 +31,16 @@ pub struct StationManager {
 }
 
 impl StationManager {
-    pub fn new(db_conn: DatabaseConnection) -> Self {
+    fn new(db_conn: DatabaseConnection) -> Self {
         Self {
             db_conn,
             stations: DashMap::new(),
             enabled_stations: Arc::new(RwLock::new(Vec::new())),
         }
+    }
+
+    pub fn new_arc(db_conn: DatabaseConnection) -> ArcStationManager {
+        Arc::new(Self::new(db_conn))
     }
 
     /// Initialize stations from database
@@ -87,7 +91,7 @@ impl StationManager {
             .unwrap_or_default();
 
         StationConfig {
-            id: station.id.to_string(),
+            id: station.id.clone(),
             name: station.name.clone(),
             camera_id: station.camera_id,
             trigger_mode: station.trigger_mode,
@@ -104,7 +108,7 @@ impl StationManager {
     fn db_roi_to_config(roi: &t_station_rois::Model) -> Option<RoiConfig> {
         let shape: Option<RoiShape> = serde_json::from_value(roi.shape.clone()).ok();
         shape.map(|s| RoiConfig {
-            id: roi.id.to_string(),
+            id: roi.id,
             name: roi.name.clone(),
             shape: s,
             purpose: roi.purpose,
@@ -163,7 +167,7 @@ impl StationManager {
 
         // Add to memory
         let config = StationConfig {
-            id: id.to_string(),
+            id,
             name: request.name,
             camera_id: request.camera_id,
             trigger_mode,
@@ -307,7 +311,7 @@ impl StationManager {
         // Update memory
         if let Some(mut managed) = self.stations.get_mut(&station_id) {
             let roi_config = RoiConfig {
-                id: roi_id.to_string(),
+                id: roi_id,
                 name: request.name,
                 shape: request.shape,
                 purpose,
@@ -324,7 +328,7 @@ impl StationManager {
     pub async fn update_roi(&self, roi_id: Uuid, request: RoiUpdateRequest) -> Result<bool, String> {
         // Find the ROI in memory to get station_id
         let station_id = self.stations.iter()
-            .find(|entry| entry.value().rois.iter().any(|r| r.id == roi_id.to_string()))
+            .find(|entry| entry.value().rois.iter().any(|r| r.id == roi_id))
             .map(|entry| *entry.key());
 
         let station_id = match station_id {
@@ -369,7 +373,7 @@ impl StationManager {
 
         // Update memory
         if let Some(mut managed) = self.stations.get_mut(&station_id) {
-            if let Some(roi) = managed.value_mut().rois.iter_mut().find(|r| r.id == roi_id.to_string()) {
+            if let Some(roi) = managed.value_mut().rois.iter_mut().find(|r| r.id == roi_id) {
                 roi.name = name;
                 if let Some(shape) = request.shape {
                     roi.shape = shape;
@@ -387,7 +391,7 @@ impl StationManager {
     pub async fn delete_roi(&self, roi_id: Uuid) -> Result<bool, String> {
         // Find the ROI in memory to get station_id
         let station_id = self.stations.iter()
-            .find(|entry| entry.value().rois.iter().any(|r| r.id == roi_id.to_string()))
+            .find(|entry| entry.value().rois.iter().any(|r| r.id == roi_id))
             .map(|entry| *entry.key());
 
         let station_id = match station_id {
@@ -402,7 +406,7 @@ impl StationManager {
         if deleted {
             // Update memory
             if let Some(mut managed) = self.stations.get_mut(&station_id) {
-                managed.value_mut().rois.retain(|r| r.id != roi_id.to_string());
+                managed.value_mut().rois.retain(|r| r.id != roi_id);
             }
             tracing::info!("Deleted ROI: {}", roi_id);
         }
@@ -415,6 +419,8 @@ impl StationManager {
         self.stations.get(&station_id).map(|s| s.rois.clone())
     }
 }
+
+pub type ArcStationManager = Arc<StationManager>;
 
 // ============================================================================
 // Request/Response DTOs
@@ -430,7 +436,7 @@ pub struct StationCreateRequest {
     pub is_enabled: Option<bool>,
     pub model_path: Option<String>,
     pub confidence_threshold: Option<f32>,
-    pub serial_port: Option<String>,
+    pub serial_port: Option<Uuid>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
@@ -443,7 +449,7 @@ pub struct StationUpdateRequest {
     pub is_enabled: Option<bool>,
     pub model_path: Option<String>,
     pub confidence_threshold: Option<f32>,
-    pub serial_port: Option<String>,
+    pub serial_port: Option<Uuid>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -467,7 +473,7 @@ pub struct RoiUpdateRequest {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StationResponse {
-    pub id: String,
+    pub id: Uuid,
     pub name: String,
     pub camera_id: Uuid,
     pub trigger_mode: TriggerMode,
@@ -475,7 +481,7 @@ pub struct StationResponse {
     pub is_enabled: bool,
     pub model_path: Option<String>,
     pub confidence_threshold: f32,
-    pub serial_port: Option<String>,
+    pub serial_port: Option<Uuid>,
     pub rois: Vec<RoiResponse>,
 }
 
@@ -499,7 +505,7 @@ impl From<ManagedStation> for StationResponse {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RoiResponse {
-    pub id: String,
+    pub id: Uuid,
     pub name: String,
     pub shape: RoiShape,
     pub purpose: t_station_rois::RoiPurpose,

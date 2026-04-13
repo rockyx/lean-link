@@ -154,14 +154,14 @@ impl PixelFormat {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct FrameSize {
     pub width: usize,
     pub height: usize,
 }
 
 /// original camera frame
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct CameraFrame {
     pub data: bytes::Bytes,
     pub block_id: u64,
@@ -277,11 +277,11 @@ pub trait IndustryCamera: Send + Sync {
     fn open(&self) -> Result<(), CameraError>;
     fn is_opened(&self) -> bool;
     fn is_grabbing(&self) -> bool;
-    fn stop_grab(&self) -> Result<(), CameraError>;
+    fn stop_grab(&mut self) -> Result<(), CameraError>;
     fn start_grab(&mut self) -> Result<(), CameraError>;
     fn close(&self) -> Result<(), CameraError>;
     fn frame_size(&self) -> Result<FrameSize, CameraError>;
-    fn trigger_one_frame(&self) -> Result<(), CameraError>;
+    fn trigger_one_frame(&self) -> Result<CameraFrame, CameraError>;
     fn create_frame_channel(&mut self) -> mpsc::Receiver<CameraFrame>;
     fn set_grab_mode(&mut self, grab_mode: GrabMode);
     fn set_exposure_auto(&mut self, auto: bool);
@@ -333,7 +333,9 @@ pub enum CameraError {
 
     Config(String),
 
-    AddCamera(String)
+    AddCamera(String),
+
+    SystemError(String),
 }
 
 impl std::fmt::Display for CameraError {
@@ -355,6 +357,7 @@ impl std::fmt::Display for CameraError {
             CameraError::InvalidIpAddress(msg) => write!(f, "相机IP地址错误：{}", msg),
             CameraError::Config(msg) => write!(f, "相机参数配置错误：{}", msg),
             CameraError::AddCamera(msg) => write!(f, "添加相机错误：{}", msg),
+            CameraError::SystemError(msg) => write!(f, "系统错误：{}", msg),
         }
     }
 }
