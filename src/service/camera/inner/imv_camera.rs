@@ -7,7 +7,6 @@ use std::os::raw::c_void;
 use std::ptr::null_mut;
 use std::str::FromStr;
 
-use bytes::BufMut;
 use tokio::sync::mpsc;
 
 use crate::ffi::imv::*;
@@ -768,12 +767,10 @@ impl Into<PixelFormat> for IMV_EPixelType {
 impl Into<CameraFrame> for IMV_Frame {
     fn into(self) -> CameraFrame {
         let frame_info = self.frameInfo;
-        let mut data = bytes::BytesMut::with_capacity(frame_info.size as usize);
-        unsafe {
-            for i in 0..frame_info.size as usize {
-                data.put_u8(self.pData.add(i) as u8);
-            }
-        }
+        let data = unsafe {
+            std::slice::from_raw_parts(self.pData, frame_info.size as usize)
+        };
+
         let frame = CameraFrame {
             block_id: frame_info.blockId,
             status: frame_info.status,
