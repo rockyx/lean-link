@@ -16,7 +16,6 @@ use std::{
 };
 use std::io::Cursor;
 
-use base64::{Engine, engine::general_purpose::STANDARD};
 use image::{ImageBuffer, Luma, Rgb, codecs::jpeg::JpegEncoder};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, mpsc};
@@ -95,20 +94,80 @@ pub struct CameraStreamInfo {
 }
 
 /// Camera frame payload for WebSocket transmission
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+/// Uses binary format for efficient transmission:
+/// [4 bytes: JSON header length (big-endian u32)][JSON header][binary image data]
+#[derive(Clone, Debug)]
 pub struct CameraFramePayload {
     /// Camera information
     pub camera: CameraStreamInfo,
 
-    /// Encoded frame data
-    pub data: String,
+    /// Encoded frame data (raw binary, no base64)
+    pub data: Vec<u8>,
 
     /// Data encoding type
     pub encoding: FrameEncoding,
 
     /// Frame size in bytes (original)
     pub size: usize,
+}
+
+/// Metadata header for binary frame transmission
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CameraFrameHeader {
+    /// Topic identifier
+    pub topic: String,
+    /// Camera information
+    pub camera: CameraStreamInfo,
+    /// Data encoding type
+    pub encoding: FrameEncoding,
+    /// Frame size in bytes (original)
+    pub size: usize,
+    /// Data length in bytes
+    pub data_length: usize,
+}
+
+impl CameraFramePayload {
+    /// Magic bytes for frame identification
+    pub const MAGIC_BYTES: &'static [u8] = b"CAMF";
+
+    /// Serialize to binary format for WebSocket transmission
+    /// Format: [4 bytes magic][4 bytes header length][JSON header][binary image data]
+    pub fn to_binary(&self) -> Vec<u8> {
+        let header = CameraFrameHeader {
+            topic: super::super::web::service::camera::CAMERA_STREAM_TOPIC.to_string(),
+            camera: self.camera.clone(),
+            encoding: self.encoding,
+            size: self.size,
+            data_length: self.data.len(),
+        };
+
+        let json_bytes = match serde_json::to_vec(&header) {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                tracing::error!("Failed to serialize frame header: {}", e);
+                return Vec::new();
+            }
+        };
+
+        // Total size: 4 (magic) + 4 (header length) + header + data
+        let total_size = Self::MAGIC_BYTES.len() + 4 + json_bytes.len() + self.data.len();
+        let mut buffer = Vec::with_capacity(total_size);
+
+        // Magic bytes for identification
+        buffer.extend_from_slice(Self::MAGIC_BYTES);
+
+        // Header length (big-endian u32)
+        buffer.extend_from_slice(&(json_bytes.len() as u32).to_be_bytes());
+
+        // JSON header
+        buffer.extend_from_slice(&json_bytes);
+
+        // Binary image data
+        buffer.extend_from_slice(&self.data);
+
+        buffer
+    }
 }
 
 /// Control message for camera stream
@@ -270,20 +329,18 @@ impl ActiveStream {
 
         let (data, encoding) = match config.encoding {
             FrameEncoding::Jpeg => {
-                // Encode as JPEG and convert to base64
+                // Encode as JPEG (no base64)
                 let jpeg_data = Self::encode_jpeg(frame, config.jpeg_quality);
-                let base64_data = Self::base64_encode(&jpeg_data);
-                (base64_data, FrameEncoding::Jpeg)
+                (jpeg_data, FrameEncoding::Jpeg)
             }
             FrameEncoding::Png => {
-                // Encode as PNG and convert to base64
+                // Encode as PNG (no base64)
                 let png_data = Self::encode_png(frame);
-                let base64_data = Self::base64_encode(&png_data);
-                (base64_data, FrameEncoding::Png)
+                (png_data, FrameEncoding::Png)
             }
             FrameEncoding::Raw => {
-                let base64_data = Self::base64_encode(&frame.data);
-                (base64_data, FrameEncoding::Raw)
+                // Raw data (no base64)
+                (frame.data.to_vec(), FrameEncoding::Raw)
             }
         };
 
@@ -293,10 +350,6 @@ impl ActiveStream {
             encoding,
             size: frame.size,
         }
-    }
-
-    fn base64_encode(data: &[u8]) -> String {
-        STANDARD.encode(data)
     }
 
     fn encode_jpeg(frame: &CameraFrame, quality: u8) -> Vec<u8> {

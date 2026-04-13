@@ -1,11 +1,11 @@
 use crate::database::entity::t_camera_configs;
-use crate::service::camera::stream::CameraStreamConfig;
+use crate::service::camera::stream::{CameraFramePayload, CameraStreamConfig};
 use crate::service::camera::{CameraConfig, CameraInfo, GrabMode};
 use crate::service::web::service::{ErrorCode, Pagination, WebResponse};
-use crate::service::websocket::WsMessage;
 use crate::{AppState, errors};
 use actix_web::{delete, get, post, put, scope, web};
 use serde::{Deserialize, Serialize};
+use tokio_tungstenite::tungstenite::Message;
 use uuid::Uuid;
 
 /// Topic for camera stream messages
@@ -161,14 +161,10 @@ async fn stream_start_inner(
         loop {
             match stream_rx.recv().await {
                 Ok(payload) => {
+                    // Send as binary message for efficiency
+                    let binary_data = payload.to_binary();
                     let _ = ws_server
-                        .broadcast(
-                            WsMessage {
-                                topic: CAMERA_STREAM_TOPIC.into(),
-                                payload: payload,
-                            }
-                            .into(),
-                        )
+                        .broadcast(Message::Binary(binary_data.into()))
                         .await;
                 }
                 Err(e) => {
