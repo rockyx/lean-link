@@ -22,6 +22,9 @@ pub struct Model {
     #[sea_orm(column_type = "String(StringLen::N(20))")]
     pub flow_control: String,
     /// 超时时间（毫秒）
+    #[cfg(feature = "sqlite")]
+    pub timeout_ms: i64,
+    #[cfg(not(feature = "sqlite"))]
     pub timeout_ms: u64,
 }
 
@@ -33,7 +36,10 @@ impl ActiveModelBehavior for ActiveModel {}
 impl Model {
     /// 获取超时时间
     pub fn timeout(&self) -> Duration {
-        Duration::from_millis(self.timeout_ms)
+        #[cfg(feature = "sqlite")]
+        return Duration::from_millis(self.timeout_ms as u64);
+        #[cfg(not(feature = "sqlite"))]
+        return Duration::from_millis(self.timeout_ms);
     }
 
     /// 获取数据位配置

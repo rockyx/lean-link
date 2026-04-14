@@ -1,5 +1,5 @@
 use crate::database::entity::t_camera_configs;
-use crate::service::camera::stream::{CameraFramePayload, CameraStreamConfig};
+use crate::service::camera::stream::CameraStreamConfig;
 use crate::service::camera::{CameraConfig, CameraInfo, GrabMode};
 use crate::service::web::service::{ErrorCode, Pagination, WebResponse};
 use crate::{AppState, errors};

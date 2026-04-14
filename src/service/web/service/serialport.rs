@@ -2,9 +2,53 @@ use crate::database::entity::t_serialport_configs;
 use actix_web::scope;
 use sea_orm::ActiveValue;
 use serde::{Deserialize, Serialize};
+use serialport::SerialPortType;
 use uuid::Uuid;
 
+/// 枚举到的串口信息 (扁平化结构, 与前端 Dart 模型匹配)
 #[derive(Serialize, Deserialize, Debug)]
+pub struct SerialPortInfoResponse {
+    pub name: String,
+    #[serde(rename = "type")]
+    pub port_type: String,
+    pub manufacturer: Option<String>,
+    pub product: Option<String>,
+    pub serial_number: Option<String>,
+    pub vid: Option<String>,
+    pub pid: Option<String>,
+}
+
+impl From<serialport::SerialPortInfo> for SerialPortInfoResponse {
+    fn from(info: serialport::SerialPortInfo) -> Self {
+        let (port_type, manufacturer, product, serial_number, vid, pid) = match info.port_type {
+            SerialPortType::UsbPort(usb) => (
+                "UsbPort".to_string(),
+                usb.manufacturer,
+                usb.product,
+                usb.serial_number,
+                Some(format!("{:04x}", usb.vid)),
+                Some(format!("{:04x}", usb.pid)),
+            ),
+            SerialPortType::PciPort => ("PciPort".to_string(), None, None, None, None, None),
+            SerialPortType::BluetoothPort => {
+                ("BluetoothPort".to_string(), None, None, None, None, None)
+            }
+            SerialPortType::Unknown => ("Unknown".to_string(), None, None, None, None, None),
+        };
+        Self {
+            name: info.port_name,
+            port_type,
+            manufacturer,
+            product,
+            serial_number,
+            vid,
+            pid,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
 pub struct SerialportConfigCreateRequest {
     pub path: String,
     pub baud_rate: u32,
@@ -12,7 +56,10 @@ pub struct SerialportConfigCreateRequest {
     pub stop_bits: String,
     pub parity: String,
     pub flow_control: String,
+    #[cfg(not(feature = "sqlite"))]
     pub timeout_ms: u64,
+    #[cfg(feature = "sqlite")]
+    pub timeout_ms: i64,
 }
 
 impl From<SerialportConfigCreateRequest> for t_serialport_configs::ActiveModel {
@@ -38,34 +85,10 @@ pub struct SerialportConfigUpdateRequest {
     pub stop_bits: Option<String>,
     pub parity: Option<String>,
     pub flow_control: Option<String>,
+    #[cfg(not(feature = "sqlite"))]
     pub timeout_ms: Option<u64>,
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct SerialportConfigResponse {
-    pub id: Uuid,
-    pub path: String,
-    pub baud_rate: u32,
-    pub data_bits: String,
-    pub stop_bits: String,
-    pub parity: String,
-    pub flow_control: String,
-    pub timeout_ms: u64,
-}
-
-impl From<t_serialport_configs::Model> for SerialportConfigResponse {
-    fn from(model: t_serialport_configs::Model) -> Self {
-        Self {
-            id: model.id,
-            path: model.path,
-            baud_rate: model.baud_rate,
-            data_bits: model.data_bits,
-            stop_bits: model.stop_bits,
-            parity: model.parity,
-            flow_control: model.flow_control,
-            timeout_ms: model.timeout_ms,
-        }
-    }
+    #[cfg(feature = "sqlite")]
+    pub timeout_ms: Option<i64>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -83,20 +106,19 @@ pub mod api {
             ErrorCode, Pagination, WebResponse,
             serialport::{
                 SerialportConfigCreateRequest, SerialportConfigListRequest,
-                SerialportConfigResponse, SerialportConfigUpdateRequest,
+                SerialportConfigUpdateRequest,
             },
         },
     };
     use actix_web::{delete, get, post, put, web};
     use sea_orm::ActiveValue;
-    use serialport::SerialPortInfo;
     use uuid::Uuid;
 
     #[post("/create")]
     async fn create(
         app_state: web::Data<AppState>,
         req: web::Json<SerialportConfigCreateRequest>,
-    ) -> actix_web::Result<web::Json<WebResponse<SerialportConfigResponse>>, crate::errors::Error>
+    ) -> actix_web::Result<web::Json<WebResponse<t_serialport_configs::Model>>, crate::errors::Error>
     {
         let db_conn = &app_state.db_conn;
 
@@ -115,7 +137,7 @@ pub mod api {
                 })?;
 
                 match config {
-                    Some(c) => Ok(WebResponse::with_result(c.into()).into()),
+                    Some(c) => Ok(WebResponse::with_result(c).into()),
                     None => Err(crate::errors::Error::InternalError(
                         ErrorCode::InternalError,
                     )),
@@ -133,7 +155,7 @@ pub mod api {
         app_state: web::Data<AppState>,
         path: web::Path<Uuid>,
         req: web::Json<SerialportConfigUpdateRequest>,
-    ) -> actix_web::Result<web::Json<WebResponse<SerialportConfigResponse>>, crate::errors::Error>
+    ) -> actix_web::Result<web::Json<WebResponse<t_serialport_configs::Model>>, crate::errors::Error>
     {
         let db_conn = &app_state.db_conn;
         let id = path.into_inner();
@@ -193,7 +215,7 @@ pub mod api {
         };
 
         match serialport_configs::update_serialport_config(db_conn, id, active_model).await {
-            Ok(Some(model)) => Ok(WebResponse::with_result(model.into()).into()),
+            Ok(Some(model)) => Ok(WebResponse::with_result(model).into()),
             Ok(None) => Err(crate::errors::Error::InternalError(
                 ErrorCode::OperationNotAllow,
             )),
@@ -228,13 +250,13 @@ pub mod api {
     async fn get(
         app_state: web::Data<AppState>,
         path: web::Path<Uuid>,
-    ) -> actix_web::Result<web::Json<WebResponse<SerialportConfigResponse>>, crate::errors::Error>
+    ) -> actix_web::Result<web::Json<WebResponse<t_serialport_configs::Model>>, crate::errors::Error>
     {
         let db_conn = &app_state.db_conn;
         let id = path.into_inner();
 
         match serialport_configs::find_serialport_config_by_id(db_conn, id).await {
-            Ok(Some(model)) => Ok(WebResponse::with_result(model.into()).into()),
+            Ok(Some(model)) => Ok(WebResponse::with_result(model).into()),
             Ok(None) => Err(crate::errors::Error::InternalError(
                 ErrorCode::OperationNotAllow,
             )),
@@ -250,7 +272,7 @@ pub mod api {
         app_state: web::Data<AppState>,
         query: web::Query<SerialportConfigListRequest>,
     ) -> actix_web::Result<
-        web::Json<WebResponse<Pagination<SerialportConfigResponse>>>,
+        web::Json<WebResponse<Pagination<t_serialport_configs::Model>>>,
         crate::errors::Error,
     > {
         let db_conn = &app_state.db_conn;
@@ -259,8 +281,8 @@ pub mod api {
 
         match serialport_configs::page_serialport_configs(db_conn, page, size).await {
             Ok(page_result) => {
-                let pagination: Pagination<SerialportConfigResponse> = Pagination {
-                    records: page_result.records.into_iter().map(|m| m.into()).collect(),
+                let pagination: Pagination<t_serialport_configs::Model> = Pagination {
+                    records: page_result.records,
                     total: page_result.total_count,
                     current: page_result.page_index,
                     size: page_result.page_size,
@@ -276,10 +298,14 @@ pub mod api {
     }
 
     #[get("/enumerate")]
-    pub async fn enumerate_serial_ports()
-    -> actix_web::Result<web::Json<WebResponse<Vec<SerialPortInfo>>>, crate::errors::Error> {
+    pub async fn enumerate_serial_ports() -> actix_web::Result<
+        web::Json<WebResponse<Vec<super::SerialPortInfoResponse>>>,
+        crate::errors::Error,
+    > {
         let ports =
             serialport::available_ports().map_err(|e| crate::errors::Error::Io(e.into()))?;
-        Ok(WebResponse::with_result(ports).into())
+        let result: Vec<super::SerialPortInfoResponse> =
+            ports.into_iter().map(|p| p.into()).collect();
+        Ok(WebResponse::with_result(result).into())
     }
 }
