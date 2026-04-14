@@ -44,35 +44,6 @@ pub struct ModbusConfigUpdateRequest {
 }
 
 #[derive(Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ModbusConfigResponse {
-    pub id: Uuid,
-    #[serde(rename = "type")]
-    pub config_type: String,
-    pub host: Option<String>,
-    pub port: Option<u16>,
-    pub slave_id: u8,
-    pub serialport_id: Option<Uuid>,
-    pub name: Option<String>,
-    pub enabled: bool,
-}
-
-impl From<t_modbus_configs::Model> for ModbusConfigResponse {
-    fn from(model: t_modbus_configs::Model) -> Self {
-        Self {
-            id: model.id,
-            config_type: model.r#type,
-            host: model.host,
-            port: model.port,
-            slave_id: model.slave_id,
-            serialport_id: model.serialport_id,
-            name: model.name,
-            enabled: model.enabled,
-        }
-    }
-}
-
-#[derive(Serialize, Deserialize)]
 pub struct ModbusConfigListRequest {
     pub page: Option<u64>,
     pub size: Option<u64>,
@@ -87,7 +58,7 @@ pub mod api {
         service::web::service::{
             ErrorCode, Pagination, WebResponse,
             modbus::{
-                ModbusConfigCreateRequest, ModbusConfigListRequest, ModbusConfigResponse,
+                ModbusConfigCreateRequest, ModbusConfigListRequest,
                 ModbusConfigUpdateRequest,
             },
         },
@@ -100,7 +71,7 @@ pub mod api {
     async fn create(
         app_state: web::Data<AppState>,
         req: web::Json<ModbusConfigCreateRequest>,
-    ) -> actix_web::Result<web::Json<WebResponse<ModbusConfigResponse>>, crate::errors::Error> {
+    ) -> actix_web::Result<web::Json<WebResponse<t_modbus_configs::Model>>, crate::errors::Error> {
         let db_conn = &app_state.db_conn;
 
         let active_model: t_modbus_configs::ActiveModel = req.into_inner().into();
@@ -116,7 +87,7 @@ pub mod api {
                         })?;
 
                 match config {
-                    Some(c) => Ok(WebResponse::with_result(c.into()).into()),
+                    Some(c) => Ok(WebResponse::with_result(c).into()),
                     None => Err(crate::errors::Error::InternalError(
                         ErrorCode::InternalError,
                     )),
@@ -134,7 +105,7 @@ pub mod api {
         app_state: web::Data<AppState>,
         path: web::Path<Uuid>,
         req: web::Json<ModbusConfigUpdateRequest>,
-    ) -> actix_web::Result<web::Json<WebResponse<ModbusConfigResponse>>, crate::errors::Error> {
+    ) -> actix_web::Result<web::Json<WebResponse<t_modbus_configs::Model>>, crate::errors::Error> {
         let db_conn = &app_state.db_conn;
         let id = path.into_inner();
 
@@ -189,7 +160,7 @@ pub mod api {
         };
 
         match modbus_configs::update_modbus_config(db_conn, id, active_model).await {
-            Ok(Some(model)) => Ok(WebResponse::with_result(model.into()).into()),
+            Ok(Some(model)) => Ok(WebResponse::with_result(model).into()),
             Ok(None) => Err(crate::errors::Error::InternalError(
                 ErrorCode::OperationNotAllow,
             )),
@@ -224,12 +195,12 @@ pub mod api {
     async fn get(
         app_state: web::Data<AppState>,
         path: web::Path<Uuid>,
-    ) -> actix_web::Result<web::Json<WebResponse<ModbusConfigResponse>>, crate::errors::Error> {
+    ) -> actix_web::Result<web::Json<WebResponse<t_modbus_configs::Model>>, crate::errors::Error> {
         let db_conn = &app_state.db_conn;
         let id = path.into_inner();
 
         match modbus_configs::find_modbus_config_by_id(db_conn, id).await {
-            Ok(Some(model)) => Ok(WebResponse::with_result(model.into()).into()),
+            Ok(Some(model)) => Ok(WebResponse::with_result(model).into()),
             Ok(None) => Err(crate::errors::Error::InternalError(
                 ErrorCode::OperationNotAllow,
             )),
@@ -245,7 +216,7 @@ pub mod api {
         app_state: web::Data<AppState>,
         query: web::Query<ModbusConfigListRequest>,
     ) -> actix_web::Result<
-        web::Json<WebResponse<Pagination<ModbusConfigResponse>>>,
+        web::Json<WebResponse<Pagination<t_modbus_configs::Model>>>,
         crate::errors::Error,
     > {
         let db_conn = &app_state.db_conn;
@@ -254,8 +225,8 @@ pub mod api {
 
         match modbus_configs::page_modbus_configs(db_conn, page, size).await {
             Ok(page_result) => {
-                let pagination: Pagination<ModbusConfigResponse> = Pagination {
-                    records: page_result.records.into_iter().map(|m| m.into()).collect(),
+                let pagination: Pagination<t_modbus_configs::Model> = Pagination {
+                    records: page_result.records,
                     total: page_result.total_count,
                     current: page_result.page_index,
                     size: page_result.page_size,

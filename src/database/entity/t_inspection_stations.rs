@@ -117,8 +117,10 @@ pub struct Model {
     pub confidence_threshold: f32,
 
     /// Serial port path for serial trigger mode
-    #[sea_orm(column_type = "String(StringLen::N(100))", nullable)]
     pub serial_port: Option<Uuid>,
+
+    /// PLC modbus config for external trigger mode
+    pub modbus: Option<Uuid>,
 
     #[serde(serialize_with = "to_local_time")]
     pub created_at: DateTimeWithTimeZone,
@@ -146,6 +148,12 @@ pub enum Relation {
         to = "super::t_serialport_configs::Column::Id"
     )]
     SerialPort,
+    #[sea_orm(
+        belongs_to = "super::t_modbus_configs::Entity",
+        from = "Column::Modbus",
+        to = "super::t_modbus_configs::Column::Id"
+    )]
+    Modbus,
 }
 
 impl Related<super::t_station_rois::Entity> for Entity {
@@ -163,6 +171,12 @@ impl Related<super::t_camera_configs::Entity> for Entity {
 impl Related<super::t_serialport_configs::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::SerialPort.def()
+    }
+}
+
+impl Related<super::t_modbus_configs::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::Modbus.def()
     }
 }
 

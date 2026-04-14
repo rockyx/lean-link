@@ -69,6 +69,12 @@ impl MigrationTrait for Migration {
                             .null(),
                     )
                     .col(
+                        ColumnDef::new(InspectionStations::Modbus)
+                            .string()
+                            .string_len(100)
+                            .null(),
+                    )
+                    .col(
                         ColumnDef::new(InspectionStations::CreatedAt)
                             .timestamp_with_time_zone()
                             .not_null(),
@@ -214,7 +220,28 @@ impl MigrationTrait for Migration {
                         .name("fk_inspection_stations_camera_id")
                         .from(InspectionStations::Table, InspectionStations::CameraId)
                         .to(CameraConfigs::Table, CameraConfigs::Id)
-                        .on_delete(sea_orm_migration::sea_query::ForeignKeyAction::Restrict)
+                        .on_delete(sea_orm_migration::sea_query::ForeignKeyAction::SetNull)
+                        .to_owned(),
+                )
+                .await?;
+            manager
+                .create_foreign_key(
+                    sea_orm_migration::sea_query::ForeignKey::create()
+                        .name("fk_inspection_stations_serialport")
+                        .from(InspectionStations::Table, InspectionStations::SerialPort)
+                        .to(SerialportConfigs::Table, SerialportConfigs::Id)
+                        .on_delete(sea_orm_migration::sea_query::ForeignKeyAction::SetNull)
+                        .to_owned(),
+                )
+                .await?;
+
+            manager
+                .create_foreign_key(
+                    sea_orm_migration::sea_query::ForeignKey::create()
+                        .name("fk_inspection_stations_modbus")
+                        .from(InspectionStations::Table, InspectionStations::Modbus)
+                        .to(ModbusConfigs::Table, ModbusConfigs::Id)
+                        .on_delete(sea_orm_migration::sea_query::ForeignKeyAction::SetNull)
                         .to_owned(),
                 )
                 .await?;
@@ -246,6 +273,7 @@ enum InspectionStations {
     ModelPath,
     ConfidenceThreshold,
     SerialPort,
+    Modbus,
     CreatedAt,
     UpdatedAt,
     DeletedAt,
@@ -269,6 +297,20 @@ enum StationRois {
 #[derive(Iden)]
 enum CameraConfigs {
     #[iden = "t_camera_configs"]
+    Table,
+    Id,
+}
+
+#[derive(Iden)]
+enum SerialportConfigs {
+    #[iden = "t_serialport_configs"]
+    Table,
+    Id,
+}
+
+#[derive(Iden)]
+enum ModbusConfigs {
+    #[iden = "t_modbus_configs"]
     Table,
     Id,
 }
