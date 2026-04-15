@@ -122,9 +122,11 @@ pub struct Model {
     /// PLC modbus config for external trigger mode
     pub modbus: Option<Uuid>,
 
+    #[sea_orm(default_expr = "Expr::current_timestamp()")]
     #[serde(serialize_with = "to_local_time")]
     pub created_at: DateTimeWithTimeZone,
 
+    #[sea_orm(default_expr = "Expr::current_timestamp()")]
     #[serde(serialize_with = "to_local_time")]
     pub updated_at: DateTimeWithTimeZone,
 

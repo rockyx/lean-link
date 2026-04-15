@@ -199,12 +199,12 @@ pub mod api {
     // ==================== ROI Routes ====================
 
     /// Get ROIs for a station
-    #[get("/{station_id}/roi/list")]
+    #[get("/{id}/roi/list")]
     pub async fn list_rois(
         app_state: web::Data<AppState>,
-        path: web::Path<StationRoiPath>,
+        path: web::Path<StationIdPath>,
     ) -> actix_web::Result<web::Json<WebResponse<Vec<RoiConfig>>>, errors::Error> {
-        let station_id = path.station_id;
+        let station_id = path.id;
 
         let rois = app_state
             .station_manager
@@ -215,13 +215,13 @@ pub mod api {
     }
 
     /// Add ROI to a station
-    #[post("/{station_id}/roi/create")]
+    #[post("/{id}/roi/create")]
     pub async fn create_roi(
         app_state: web::Data<AppState>,
-        path: web::Path<StationRoiPath>,
+        path: web::Path<StationIdPath>,
         req: web::Json<RoiCreateRequest>,
     ) -> actix_web::Result<web::Json<WebResponse<String>>, errors::Error> {
-        let station_id = path.station_id;
+        let station_id = path.id;
 
         let roi_id = app_state
             .station_manager

@@ -114,9 +114,11 @@ pub struct Model {
     #[sea_orm(default_value = "true")]
     pub enabled: bool,
 
+    #[sea_orm(default_expr = "Expr::current_timestamp()")]
     #[serde(serialize_with = "to_local_time")]
     pub created_at: DateTimeWithTimeZone,
 
+    #[sea_orm(default_expr = "Expr::current_timestamp()")]
     #[serde(serialize_with = "to_local_time")]
     pub updated_at: DateTimeWithTimeZone,
 
@@ -142,12 +144,15 @@ impl Related<super::t_inspection_stations::Entity> for Entity {
 
 impl ActiveModelBehavior for ActiveModel {
     fn new() -> Self {
+        let now = DateTimeWithTimeZone::from(Local::now());
         Self {
             id: Set(Uuid::now_v7()),
             station_id: Set(Uuid::nil()),
             purpose: Set(RoiPurpose::Detection),
             enabled: Set(true),
             shape: Set(Json::Null),
+            created_at: Set(now),
+            updated_at: Set(now),
             ..ActiveModelTrait::default()
         }
     }
