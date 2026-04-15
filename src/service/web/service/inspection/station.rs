@@ -1,6 +1,6 @@
 use crate::errors;
 use crate::service::inspection::manager::{
-    RoiCreateRequest, RoiResponse, RoiUpdateRequest, StationCreateRequest, StationResponse,
+    RoiCreateRequest, RoiUpdateRequest, StationCreateRequest, StationResponse,
     StationUpdateRequest,
 };
 use crate::service::web::service::{ErrorCode, WebResponse};
@@ -41,7 +41,7 @@ pub struct SetEnabledRequest {
 
 #[scope("/inspection/station")]
 pub mod api {
-    use crate::AppState;
+    use crate::{AppState, service::inspection::station::RoiConfig};
 
     use super::*;
 
@@ -52,12 +52,8 @@ pub mod api {
     ) -> actix_web::Result<web::Json<WebResponse<()>>, errors::Error> {
         app_state
             .station_manager
-            .init_from_database()
-            .await
-            .map_err(|e| {
-                tracing::error!(error = ?e, "Failed to initialize stations");
-                errors::Error::InternalError(ErrorCode::InternalError)
-            })?;
+            .initialize_from_database()
+            .await?;
 
         Ok(WebResponse::with_result(()).into())
     }
@@ -207,7 +203,7 @@ pub mod api {
     pub async fn list_rois(
         app_state: web::Data<AppState>,
         path: web::Path<StationRoiPath>,
-    ) -> actix_web::Result<web::Json<WebResponse<Vec<RoiResponse>>>, errors::Error> {
+    ) -> actix_web::Result<web::Json<WebResponse<Vec<RoiConfig>>>, errors::Error> {
         let station_id = path.station_id;
 
         let rois = app_state
@@ -215,8 +211,7 @@ pub mod api {
             .get_station_rois(station_id)
             .ok_or_else(|| errors::Error::BadRequest(ErrorCode::NotFound, "工作站不存在".into()))?;
 
-        let responses: Vec<RoiResponse> = rois.into_iter().map(|r| r.into()).collect();
-        Ok(WebResponse::with_result(responses).into())
+        Ok(WebResponse::with_result(rois).into())
     }
 
     /// Add ROI to a station

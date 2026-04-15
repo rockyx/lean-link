@@ -6,15 +6,19 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
-use crate::database::{
-    entity::{t_inspection_stations, t_station_rois},
-    inspection_stations::{
-        delete_inspection_station, delete_station_roi, find_all_inspection_stations,
-        find_inspection_station_by_id, find_station_rois_by_station_id,
-        insert_inspection_station, insert_station_roi, update_inspection_station, update_station_roi,
-    },
-};
 use crate::service::inspection::station::{RoiConfig, RoiShape, StationConfig, TriggerMode};
+use crate::{
+    database::{
+        entity::{t_inspection_stations, t_station_rois},
+        inspection_stations::{
+            delete_inspection_station, delete_station_roi, find_all_inspection_stations,
+            find_inspection_station_by_id, find_station_rois_by_station_id,
+            insert_inspection_station, insert_station_roi, update_inspection_station,
+            update_station_roi,
+        },
+    },
+    errors,
+};
 
 /// Managed station frame containing station config and ROIs
 #[derive(Clone, Debug)]
@@ -44,21 +48,17 @@ impl StationManager {
     }
 
     /// Initialize stations from database
-    pub async fn init_from_database(&self) -> Result<(), String> {
+    pub async fn initialize_from_database(&self) -> Result<(), errors::Error> {
         tracing::info!("Initializing inspection stations from database...");
 
         // Load all stations
-        let db_stations = find_all_inspection_stations(&self.db_conn)
-            .await
-            .map_err(|e| format!("Failed to load stations: {}", e))?;
+        let db_stations = find_all_inspection_stations(&self.db_conn).await?;
 
         let mut enabled_ids = Vec::new();
 
         for station in db_stations {
             // Load ROIs for each station
-            let db_rois = find_station_rois_by_station_id(&self.db_conn, station.id)
-                .await
-                .map_err(|e| format!("Failed to load ROIs for station {}: {}", station.id, e))?;
+            let db_rois = find_station_rois_by_station_id(&self.db_conn, station.id).await?;
 
             // Convert database model to service model
             let config = Self::db_station_to_config(&station);
@@ -71,10 +71,8 @@ impl StationManager {
                 enabled_ids.push(station.id);
             }
 
-            self.stations.insert(
-                station.id,
-                ManagedStation { config, rois },
-            );
+            self.stations
+                .insert(station.id, ManagedStation { config, rois });
         }
 
         // Update enabled stations list
@@ -87,8 +85,8 @@ impl StationManager {
 
     /// Convert database station model to service config
     fn db_station_to_config(station: &t_inspection_stations::Model) -> StationConfig {
-        let detection_types: Vec<String> = serde_json::from_value(station.detection_types.clone())
-            .unwrap_or_default();
+        let detection_types: Vec<String> =
+            serde_json::from_value(station.detection_types.clone()).unwrap_or_default();
 
         StationConfig {
             id: station.id.clone(),
@@ -139,10 +137,12 @@ impl StationManager {
     }
 
     /// Create a new station
-    pub async fn create_station(&self, request: StationCreateRequest) -> Result<Uuid, String> {
+    pub async fn create_station(
+        &self,
+        request: StationCreateRequest,
+    ) -> Result<Uuid, errors::Error> {
         let id = Uuid::now_v7();
-        let detection_types_json = serde_json::to_value(&request.detection_types)
-            .map_err(|e| format!("Failed to serialize detection types: {}", e))?;
+        let detection_types_json = serde_json::to_value(&request.detection_types)?;
 
         let is_enabled = request.is_enabled.unwrap_or(true);
         let confidence_threshold = request.confidence_threshold.unwrap_or(0.5);
@@ -161,9 +161,7 @@ impl StationManager {
             ..Default::default()
         };
 
-        insert_inspection_station(&self.db_conn, active_model)
-            .await
-            .map_err(|e| format!("Failed to create station: {}", e))?;
+        insert_inspection_station(&self.db_conn, active_model).await?;
 
         // Add to memory
         let config = StationConfig {
@@ -179,7 +177,13 @@ impl StationManager {
             serial_port: request.serial_port,
         };
 
-        self.stations.insert(id, ManagedStation { config, rois: vec![] });
+        self.stations.insert(
+            id,
+            ManagedStation {
+                config,
+                rois: vec![],
+            },
+        );
 
         if is_enabled {
             let mut enabled = self.enabled_stations.write().await;
@@ -197,29 +201,31 @@ impl StationManager {
         &self,
         id: Uuid,
         request: StationUpdateRequest,
-    ) -> Result<bool, String> {
-        let existing = find_inspection_station_by_id(&self.db_conn, id)
-            .await
-            .map_err(|e| format!("Failed to find station: {}", e))?;
+    ) -> Result<bool, errors::Error> {
+        let existing = find_inspection_station_by_id(&self.db_conn, id).await?;
 
         let existing = match existing {
             Some(s) => s,
             None => return Ok(false),
         };
 
-        let name = request.name.clone().unwrap_or_else(|| existing.name.clone());
+        let name = request
+            .name
+            .clone()
+            .unwrap_or_else(|| existing.name.clone());
         let camera_id = request.camera_id.unwrap_or(existing.camera_id);
         let trigger_mode = request.trigger_mode.unwrap_or(existing.trigger_mode);
         let is_enabled = request.is_enabled.unwrap_or(existing.is_enabled);
-        let confidence_threshold = request.confidence_threshold.unwrap_or(existing.confidence_threshold);
+        let confidence_threshold = request
+            .confidence_threshold
+            .unwrap_or(existing.confidence_threshold);
         let model_path = request.model_path.clone().or(existing.model_path);
         let serial_port = request.serial_port.clone().or(existing.serial_port);
 
         let detection_types = request.detection_types.clone().unwrap_or_else(|| {
             serde_json::from_value(existing.detection_types.clone()).unwrap_or_default()
         });
-        let detection_types_json = serde_json::to_value(&detection_types)
-            .map_err(|e| format!("Failed to serialize detection types: {}", e))?;
+        let detection_types_json = serde_json::to_value(&detection_types)?;
 
         let active_model = t_inspection_stations::ActiveModel {
             id: sea_orm::Set(id),
@@ -234,9 +240,7 @@ impl StationManager {
             ..Default::default()
         };
 
-        update_inspection_station(&self.db_conn, id, active_model)
-            .await
-            .map_err(|e| format!("Failed to update station: {}", e))?;
+        update_inspection_station(&self.db_conn, id, active_model).await?;
 
         // Update memory
         if let Some(mut managed) = self.stations.get_mut(&id) {
@@ -266,10 +270,8 @@ impl StationManager {
     }
 
     /// Delete a station (soft delete)
-    pub async fn delete_station(&self, id: Uuid) -> Result<bool, String> {
-        let deleted = delete_inspection_station(&self.db_conn, id)
-            .await
-            .map_err(|e| format!("Failed to delete station: {}", e))?;
+    pub async fn delete_station(&self, id: Uuid) -> Result<bool, errors::Error> {
+        let deleted = delete_inspection_station(&self.db_conn, id).await?;
 
         if deleted {
             // Remove from memory
@@ -286,13 +288,18 @@ impl StationManager {
     }
 
     /// Add ROI to a station
-    pub async fn add_roi(&self, station_id: Uuid, request: RoiCreateRequest) -> Result<Uuid, String> {
+    pub async fn add_roi(
+        &self,
+        station_id: Uuid,
+        request: RoiCreateRequest,
+    ) -> Result<Uuid, errors::Error> {
         let roi_id = Uuid::now_v7();
-        let purpose = request.purpose.unwrap_or(t_station_rois::RoiPurpose::Detection);
+        let purpose = request
+            .purpose
+            .unwrap_or(t_station_rois::RoiPurpose::Detection);
         let enabled = request.enabled.unwrap_or(true);
 
-        let shape_json = serde_json::to_value(&request.shape)
-            .map_err(|e| format!("Failed to serialize ROI shape: {}", e))?;
+        let shape_json = serde_json::to_value(&request.shape)?;
 
         let active_model = t_station_rois::ActiveModel {
             id: sea_orm::Set(roi_id),
@@ -304,9 +311,7 @@ impl StationManager {
             ..Default::default()
         };
 
-        insert_station_roi(&self.db_conn, active_model)
-            .await
-            .map_err(|e| format!("Failed to create ROI: {}", e))?;
+        insert_station_roi(&self.db_conn, active_model).await?;
 
         // Update memory
         if let Some(mut managed) = self.stations.get_mut(&station_id) {
@@ -325,9 +330,15 @@ impl StationManager {
     }
 
     /// Update ROI
-    pub async fn update_roi(&self, roi_id: Uuid, request: RoiUpdateRequest) -> Result<bool, String> {
+    pub async fn update_roi(
+        &self,
+        roi_id: Uuid,
+        request: RoiUpdateRequest,
+    ) -> Result<bool, errors::Error> {
         // Find the ROI in memory to get station_id
-        let station_id = self.stations.iter()
+        let station_id = self
+            .stations
+            .iter()
             .find(|entry| entry.value().rois.iter().any(|r| r.id == roi_id))
             .map(|entry| *entry.key());
 
@@ -337,8 +348,7 @@ impl StationManager {
         };
 
         let existing = find_station_rois_by_station_id(&self.db_conn, station_id)
-            .await
-            .map_err(|e| format!("Failed to find ROIs: {}", e))?
+            .await?
             .into_iter()
             .find(|r| r.id == roi_id);
 
@@ -347,12 +357,15 @@ impl StationManager {
             None => return Ok(false),
         };
 
-        let name = request.name.clone().unwrap_or_else(|| existing.name.clone());
+        let name = request
+            .name
+            .clone()
+            .unwrap_or_else(|| existing.name.clone());
         let purpose = request.purpose.unwrap_or(existing.purpose);
         let enabled = request.enabled.unwrap_or(existing.enabled);
 
         let shape_json = if let Some(ref shape) = request.shape {
-            serde_json::to_value(shape).map_err(|e| format!("Failed to serialize shape: {}", e))?
+            serde_json::to_value(shape)?
         } else {
             existing.shape
         };
@@ -367,9 +380,7 @@ impl StationManager {
             ..Default::default()
         };
 
-        update_station_roi(&self.db_conn, roi_id, active_model)
-            .await
-            .map_err(|e| format!("Failed to update ROI: {}", e))?;
+        update_station_roi(&self.db_conn, roi_id, active_model).await?;
 
         // Update memory
         if let Some(mut managed) = self.stations.get_mut(&station_id) {
@@ -388,9 +399,11 @@ impl StationManager {
     }
 
     /// Delete ROI
-    pub async fn delete_roi(&self, roi_id: Uuid) -> Result<bool, String> {
+    pub async fn delete_roi(&self, roi_id: Uuid) -> Result<bool, errors::Error> {
         // Find the ROI in memory to get station_id
-        let station_id = self.stations.iter()
+        let station_id = self
+            .stations
+            .iter()
             .find(|entry| entry.value().rois.iter().any(|r| r.id == roi_id))
             .map(|entry| *entry.key());
 
@@ -399,9 +412,7 @@ impl StationManager {
             None => return Ok(false),
         };
 
-        let deleted = delete_station_roi(&self.db_conn, roi_id)
-            .await
-            .map_err(|e| format!("Failed to delete ROI: {}", e))?;
+        let deleted = delete_station_roi(&self.db_conn, roi_id).await?;
 
         if deleted {
             // Update memory
@@ -482,7 +493,7 @@ pub struct StationResponse {
     pub model_path: Option<String>,
     pub confidence_threshold: f32,
     pub serial_port: Option<Uuid>,
-    pub rois: Vec<RoiResponse>,
+    pub rois: Vec<RoiConfig>,
 }
 
 impl From<ManagedStation> for StationResponse {
@@ -497,29 +508,8 @@ impl From<ManagedStation> for StationResponse {
             model_path: managed.config.model_path,
             confidence_threshold: managed.config.confidence_threshold,
             serial_port: managed.config.serial_port,
-            rois: managed.rois.into_iter().map(|r| r.into()).collect(),
+            rois: managed.rois,
         }
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RoiResponse {
-    pub id: Uuid,
-    pub name: String,
-    pub shape: RoiShape,
-    pub purpose: t_station_rois::RoiPurpose,
-    pub enabled: bool,
-}
-
-impl From<RoiConfig> for RoiResponse {
-    fn from(roi: RoiConfig) -> Self {
-        Self {
-            id: roi.id,
-            name: roi.name,
-            shape: roi.shape,
-            purpose: roi.purpose,
-            enabled: roi.enabled,
-        }
-    }
-}

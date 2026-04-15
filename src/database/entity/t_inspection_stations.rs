@@ -182,12 +182,15 @@ impl Related<super::t_modbus_configs::Entity> for Entity {
 
 impl ActiveModelBehavior for ActiveModel {
     fn new() -> Self {
+        let now = DateTimeWithTimeZone::from(Local::now());
         Self {
             id: Set(Uuid::now_v7()),
             trigger_mode: Set(TriggerMode::default()),
             is_enabled: Set(true),
             confidence_threshold: Set(0.5),
             detection_types: Set(Json::Array(vec![])),
+            created_at: Set(now),
+            updated_at: Set(now),
             ..ActiveModelTrait::default()
         }
     }
