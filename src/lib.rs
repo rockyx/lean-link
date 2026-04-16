@@ -218,7 +218,7 @@ impl AppState {
 
         #[cfg(feature = "inspection")]
         let inspection_manager =
-            InspectionManager::new_arc(camera_manager.clone(), station_manager.clone());
+            InspectionManager::new_arc(db_conn.clone(), camera_manager.clone(), station_manager.clone());
 
         Ok(Self {
             db_conn,

@@ -2,21 +2,30 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use dashmap::DashMap;
+use sea_orm::{ActiveValue, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
 use tokio::select;
 use tokio::sync::mpsc::Sender;
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::{Mutex, RwLock, mpsc};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
+use crate::database::entity::prelude::TSettings;
+use crate::database::entity::t_settings;
 use crate::service::camera::{CameraFrame, GrabMode};
+use crate::service::inspection::config::InspectionSettings;
 use crate::service::inspection::station::{StationConfig, TriggerMode};
 use crate::{
     errors,
     service::{camera::manager::ArcCameraManager, inspection::manager::ArcStationManager},
 };
 
+pub mod config;
 pub mod manager;
 pub mod station;
+
+mod keys {
+    pub const INSPECTION: &str = "inspection.settings";
+}
 
 pub enum InspectionEvent {
     OneTrigger(Uuid),
@@ -24,27 +33,36 @@ pub enum InspectionEvent {
 }
 
 pub struct InspectionManager {
+    db_conn: DatabaseConnection,
     camera_manager: ArcCameraManager,
     station_manager: ArcStationManager,
     loop_token: Mutex<CancellationToken>,
     camera_to_stations: DashMap<Uuid, HashSet<Uuid>>,
+    inspection: RwLock<InspectionSettings>,
 }
 
 impl InspectionManager {
-    fn new(camera_manager: ArcCameraManager, station_manager: ArcStationManager) -> Self {
+    fn new(
+        db_conn: DatabaseConnection,
+        camera_manager: ArcCameraManager,
+        station_manager: ArcStationManager,
+    ) -> Self {
         Self {
+            db_conn,
             camera_manager,
             station_manager,
             loop_token: Mutex::new(CancellationToken::new()),
             camera_to_stations: DashMap::new(),
+            inspection: RwLock::new(InspectionSettings::default()),
         }
     }
 
     pub fn new_arc(
+        db_conn: DatabaseConnection,
         camera_manager: ArcCameraManager,
         station_manager: ArcStationManager,
     ) -> ArcInspectionManager {
-        Arc::new(Self::new(camera_manager, station_manager))
+        Arc::new(Self::new(db_conn, camera_manager, station_manager))
     }
 
     async fn start_continues(
@@ -193,6 +211,67 @@ impl InspectionManager {
         tokio::spawn(async move {
             if let Some(station_config) = station_manager.get_station(station_id) {}
         });
+    }
+
+    pub async fn initialize_from_database(&self) -> Result<(), errors::Error> {
+        self.camera_manager.initialize_from_database().await?;
+        self.station_manager.initialize_from_database().await?;
+
+        {
+            let model = TSettings::find()
+                .filter(
+                    t_settings::Column::Key
+                        .eq(keys::INSPECTION)
+                        .and(t_settings::Column::DeletedAt.is_null()),
+                )
+                .one(&self.db_conn)
+                .await?;
+
+            match model {
+                None => {}
+                Some(config) => {
+                    let value = serde_json::from_value(config.value)?;
+                    *self.inspection.write().await = value;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub async fn set_inspection(&self, settings: &InspectionSettings) -> Result<(), errors::Error> {
+        let setting_model = TSettings::find()
+            .filter(
+                t_settings::Column::Key
+                    .eq(keys::INSPECTION)
+                    .and(t_settings::Column::DeletedAt.is_null()),
+            )
+            .one(&self.db_conn)
+            .await?;
+
+        let json_value = serde_json::to_value(&settings)?;
+        if setting_model.is_none() {
+            let model = t_settings::ActiveModel {
+                id: ActiveValue::set(Uuid::now_v7()),
+                key: ActiveValue::set(keys::INSPECTION.into()),
+                value: ActiveValue::set(json_value),
+                ..Default::default()
+            };
+            TSettings::insert(model).exec(&self.db_conn).await?;
+        } else {
+            let model = t_settings::ActiveModel {
+                id: ActiveValue::set(setting_model.unwrap().id),
+                key: ActiveValue::set(keys::INSPECTION.into()),
+                value: ActiveValue::set(json_value),
+                ..Default::default()
+            };
+            TSettings::update(model).exec(&self.db_conn).await?;
+        }
+        *self.inspection.write().await = settings.clone();
+        Ok(())
+    }
+
+    pub async fn get_inspection(&self) -> InspectionSettings {
+        self.inspection.read().await.clone()
     }
 }
 
