@@ -389,6 +389,15 @@ pub struct StationConfig {
     /// Only used when trigger_mode is Serial
     #[serde(default)]
     pub serial_port: Option<Uuid>,
+
+    /// modbus config for external trigger mode (optional)
+    /// Only used when trigger_mode is Modbus
+    #[serde(default)]
+    pub modbus: Option<Uuid>,
+
+    /// if acquisition only
+    #[serde(default)]
+    pub acquisition_mode: bool,
 }
 
 impl StationConfig {
@@ -556,6 +565,8 @@ mod tests {
             model_path: None,
             confidence_threshold: 0.5,
             serial_port: None,
+            modbus: None,
+            acquisition_mode: false,
         };
 
         // Add ROI
@@ -606,6 +617,8 @@ mod tests {
             model_path: None,
             confidence_threshold: 0.5,
             serial_port: None,
+            modbus: None,
+            acquisition_mode: false,
         };
 
         // get_all_rois should return empty when no rois configured

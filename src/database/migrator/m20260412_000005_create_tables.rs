@@ -64,15 +64,18 @@ impl MigrationTrait for Migration {
                     )
                     .col(
                         ColumnDef::new(InspectionStations::SerialPort)
-                            .string()
-                            .string_len(100)
+                            .uuid()
                             .null(),
                     )
                     .col(
                         ColumnDef::new(InspectionStations::Modbus)
-                            .string()
-                            .string_len(100)
+                            .uuid()
                             .null(),
+                    )
+                    .col(
+                        ColumnDef::new(InspectionStations::AcquisitionMode)
+                        .boolean()
+                        .default(false),
                     )
                     .col(
                         ColumnDef::new(InspectionStations::CreatedAt)
@@ -274,6 +277,7 @@ enum InspectionStations {
     ConfidenceThreshold,
     SerialPort,
     Modbus,
+    AcquisitionMode,
     CreatedAt,
     UpdatedAt,
     DeletedAt,

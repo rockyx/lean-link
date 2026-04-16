@@ -122,6 +122,9 @@ pub struct Model {
     /// PLC modbus config for external trigger mode
     pub modbus: Option<Uuid>,
 
+    /// If true every detection is OK,and save images,
+    pub acquisition_mode: bool,
+
     #[sea_orm(default_expr = "Expr::current_timestamp()")]
     #[serde(serialize_with = "to_local_time")]
     pub created_at: DateTimeWithTimeZone,

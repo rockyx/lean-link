@@ -99,6 +99,8 @@ impl StationManager {
             model_path: station.model_path.clone(),
             confidence_threshold: station.confidence_threshold,
             serial_port: station.serial_port.clone(),
+            modbus: station.modbus.clone(),
+            acquisition_mode: station.acquisition_mode,
         }
     }
 
@@ -158,6 +160,8 @@ impl StationManager {
             model_path: sea_orm::Set(request.model_path.clone()),
             confidence_threshold: sea_orm::Set(confidence_threshold),
             serial_port: sea_orm::Set(request.serial_port.clone()),
+            modbus: sea_orm::Set(request.modbus.clone()),
+            acquisition_mode: sea_orm::Set(request.acquisition_mode),
             ..Default::default()
         };
 
@@ -175,6 +179,8 @@ impl StationManager {
             model_path: request.model_path,
             confidence_threshold,
             serial_port: request.serial_port,
+            modbus: request.modbus,
+            acquisition_mode: request.acquisition_mode,
         };
 
         self.stations.insert(
@@ -221,6 +227,8 @@ impl StationManager {
             .unwrap_or(existing.confidence_threshold);
         let model_path = request.model_path.clone().or(existing.model_path);
         let serial_port = request.serial_port.clone().or(existing.serial_port);
+        let modbus = request.modbus.clone().or(existing.modbus);
+        let acquisition_mode = request.acquisition_mode.unwrap_or(existing.acquisition_mode);
 
         let detection_types = request.detection_types.clone().unwrap_or_else(|| {
             serde_json::from_value(existing.detection_types.clone()).unwrap_or_default()
@@ -237,6 +245,8 @@ impl StationManager {
             model_path: sea_orm::Set(model_path.clone()),
             confidence_threshold: sea_orm::Set(confidence_threshold),
             serial_port: sea_orm::Set(serial_port.clone()),
+            modbus: sea_orm::Set(modbus.clone()),
+            acquisition_mode: sea_orm::Set(acquisition_mode),
             ..Default::default()
         };
 
@@ -253,6 +263,8 @@ impl StationManager {
             managed.config.model_path = model_path;
             managed.config.confidence_threshold = confidence_threshold;
             managed.config.serial_port = serial_port;
+            managed.config.modbus = modbus;
+            managed.config.acquisition_mode = acquisition_mode;
 
             // Update enabled list
             let mut enabled = self.enabled_stations.write().await;
@@ -448,6 +460,8 @@ pub struct StationCreateRequest {
     pub model_path: Option<String>,
     pub confidence_threshold: Option<f32>,
     pub serial_port: Option<Uuid>,
+    pub modbus: Option<Uuid>,
+    pub acquisition_mode: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
@@ -461,6 +475,8 @@ pub struct StationUpdateRequest {
     pub model_path: Option<String>,
     pub confidence_threshold: Option<f32>,
     pub serial_port: Option<Uuid>,
+    pub modbus: Option<Uuid>,
+    pub acquisition_mode: Option<bool>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -493,6 +509,8 @@ pub struct StationResponse {
     pub model_path: Option<String>,
     pub confidence_threshold: f32,
     pub serial_port: Option<Uuid>,
+    pub modbus: Option<Uuid>,
+    pub acquisition_mode: bool,
     pub rois: Vec<RoiConfig>,
 }
 
@@ -508,6 +526,8 @@ impl From<ManagedStation> for StationResponse {
             model_path: managed.config.model_path,
             confidence_threshold: managed.config.confidence_threshold,
             serial_port: managed.config.serial_port,
+            modbus: managed.config.modbus,
+            acquisition_mode: managed.config.acquisition_mode,
             rois: managed.rois,
         }
     }
