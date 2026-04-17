@@ -595,7 +595,7 @@ mod tests {
         config.set_roi(roi1_updated);
         assert_eq!(config.rois.len(), 2); // Still 2, not 3
         assert_eq!(
-            config.rois.iter().find(|r| r.id == "roi_1").unwrap().name,
+            config.rois.iter().find(|r| r.id == roi2_id).unwrap().name,
             "更新区域1"
         );
 

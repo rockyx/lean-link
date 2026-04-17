@@ -13,15 +13,20 @@ use crate::database::entity::prelude::TSettings;
 use crate::database::entity::t_settings;
 use crate::service::camera::{CameraFrame, GrabMode};
 use crate::service::inspection::config::InspectionSettings;
+use crate::service::inspection::detector::Detector;
+use crate::service::inspection::manager::ManagedStation;
 use crate::service::inspection::station::{StationConfig, TriggerMode};
+use crate::service::inspection::yolo::OnnxInference;
 use crate::{
     errors,
     service::{camera::manager::ArcCameraManager, inspection::manager::ArcStationManager},
 };
 
 pub mod config;
+pub mod detector;
 pub mod manager;
 pub mod station;
+pub mod yolo;
 
 mod keys {
     pub const INSPECTION: &str = "inspection.settings";
@@ -37,8 +42,12 @@ pub struct InspectionManager {
     camera_manager: ArcCameraManager,
     station_manager: ArcStationManager,
     loop_token: Mutex<CancellationToken>,
-    camera_to_stations: DashMap<Uuid, HashSet<Uuid>>,
+    camera_to_stations: Arc<DashMap<Uuid, HashSet<Uuid>>>,
     inspection: RwLock<InspectionSettings>,
+    class_to_detection_type: Arc<DashMap<String, String>>,
+    onnx_inferences: DashMap<Uuid, Arc<Mutex<OnnxInference>>>,
+    #[cfg(feature = "web")]
+    ws_server: crate::service::websocket::ArcWebSocketServer,
 }
 
 impl InspectionManager {
@@ -46,14 +55,19 @@ impl InspectionManager {
         db_conn: DatabaseConnection,
         camera_manager: ArcCameraManager,
         station_manager: ArcStationManager,
+        #[cfg(feature = "web")] ws_server: crate::service::websocket::ArcWebSocketServer,
     ) -> Self {
         Self {
             db_conn,
             camera_manager,
             station_manager,
             loop_token: Mutex::new(CancellationToken::new()),
-            camera_to_stations: DashMap::new(),
+            camera_to_stations: Arc::new(DashMap::new()),
             inspection: RwLock::new(InspectionSettings::default()),
+            class_to_detection_type: Arc::new(DashMap::new()),
+            onnx_inferences: DashMap::new(),
+            #[cfg(feature = "web")]
+            ws_server,
         }
     }
 
@@ -61,8 +75,28 @@ impl InspectionManager {
         db_conn: DatabaseConnection,
         camera_manager: ArcCameraManager,
         station_manager: ArcStationManager,
+        #[cfg(feature = "web")] ws_server: crate::service::websocket::ArcWebSocketServer,
     ) -> ArcInspectionManager {
-        Arc::new(Self::new(db_conn, camera_manager, station_manager))
+        Arc::new(Self::new(
+            db_conn,
+            camera_manager,
+            station_manager,
+            #[cfg(feature = "web")]
+            ws_server,
+        ))
+    }
+
+    fn initializ_onnx(&self, station_config: &StationConfig) -> Result<(), errors::Error> {
+        if let Some(ref model_path) = station_config.model_path && !model_path.is_empty() {
+            let mut onnx_inference =
+                OnnxInference::new(model_path.clone(), station_config.name.clone());
+            onnx_inference.initialize()?;
+            self.onnx_inferences.insert(
+                station_config.id.clone(),
+                Arc::new(Mutex::new(onnx_inference)),
+            );
+        }
+        Ok(())
     }
 
     async fn start_continues(
@@ -88,6 +122,8 @@ impl InspectionManager {
             .camera_manager
             .start_grabbing(&station_config.camera_id, GrabMode::Continuous)
             .await?;
+
+        self.initializ_onnx(&station_config)?;
 
         let station_id = station_config.id.clone();
 
@@ -118,9 +154,14 @@ impl InspectionManager {
             station_set.insert(station_config.id.clone());
             self.camera_to_stations.insert(camera_id, station_set);
             self.camera_manager
+                .open_camera(&station_config.camera_id)
+                .await?;
+            self.camera_manager
                 .start_grabbing(&station_config.camera_id, GrabMode::SingleFrame)
                 .await?;
         }
+
+        self.initializ_onnx(&station_config)?;
 
         Ok(())
     }
@@ -134,9 +175,15 @@ impl InspectionManager {
             station_set.insert(station_config.id.clone());
             self.camera_to_stations.insert(camera_id, station_set);
             self.camera_manager
+                .open_camera(&station_config.camera_id)
+                .await?;
+            self.camera_manager
                 .start_grabbing(&station_config.camera_id, GrabMode::SingleFrame)
                 .await?;
         }
+
+        self.initializ_onnx(&station_config)?;
+
         Ok(())
     }
 
@@ -170,12 +217,19 @@ impl InspectionManager {
 
         let station_manager = self.station_manager.clone();
         let camera_manager = self.camera_manager.clone();
+        let camera_to_stations = self.camera_to_stations.clone();
+        let class_to_detection_type = self.class_to_detection_type.clone();
         tokio::spawn(async move {
             loop {
                 let station_manager = station_manager.clone();
                 let camera_manager = camera_manager.clone();
+                let class_to_detection_type = class_to_detection_type.clone();
                 select! {
                     _ = cloned_token.cancelled() => {
+                        if let Err(e) = camera_manager.close_all().await {
+                            tracing::error!("Close All Camera error: {:?}", e);
+                        }
+                        camera_to_stations.clear();
                         break;
                     }
 
@@ -185,7 +239,7 @@ impl InspectionManager {
                                 match e {
                                     // 手动触发
                                     InspectionEvent::OneTrigger(station_id) => {
-                                        Self::on_one_trigger(camera_manager, station_manager, station_id);
+                                        Self::on_one_trigger(camera_manager, station_manager, station_id, class_to_detection_type);
                                     },
                                     // 相机持续触发
                                     InspectionEvent::ContinueTrigger(station_id, camera_frame) => {
@@ -203,14 +257,10 @@ impl InspectionManager {
         Ok(tx)
     }
 
-    fn on_one_trigger(
-        camera_manager: ArcCameraManager,
-        station_manager: ArcStationManager,
-        station_id: Uuid,
-    ) {
-        tokio::spawn(async move {
-            if let Some(station_config) = station_manager.get_station(station_id) {}
-        });
+    pub async fn stop(&self) -> Result<(), errors::Error> {
+        let loop_token = self.loop_token.lock().await;
+        loop_token.cancel();
+        Ok(())
     }
 
     pub async fn initialize_from_database(&self) -> Result<(), errors::Error> {
@@ -272,6 +322,46 @@ impl InspectionManager {
 
     pub async fn get_inspection(&self) -> InspectionSettings {
         self.inspection.read().await.clone()
+    }
+
+    pub async fn register_class_to_detection_type<S: Into<String>>(
+        &self,
+        class: S,
+        detection_type: S,
+    ) {
+        self.class_to_detection_type
+            .insert(class.into(), detection_type.into());
+    }
+
+    fn on_one_trigger(
+        camera_manager: ArcCameraManager,
+        station_manager: ArcStationManager,
+        station_id: Uuid,
+        class_to_detection_type: Arc<DashMap<String, String>>,
+    ) {
+        let managed_station = station_manager.get_station(station_id);
+        if managed_station.is_none() {
+            return;
+        }
+
+        let managed_station = managed_station.unwrap();
+        tokio::spawn(async move {
+            match camera_manager
+                .trigger_frame(&managed_station.config.camera_id)
+                .await
+            {
+                Ok(_) => {}
+                Err(_) => {}
+            }
+        });
+    }
+
+    fn inference(managed_station: &ManagedStation) -> Result<(), errors::Error> {
+        Ok(())
+    }
+
+    pub async fn test_station(&self, station_id: &Uuid) -> Result<(), errors::Error> {
+        Ok(())
     }
 }
 

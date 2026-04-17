@@ -516,6 +516,7 @@ impl CameraManager {
         let ids = self.get_camera_ids();
 
         for id in ids {
+            self.stop_stream(&id).await?;
             self.close_camera(&id).await?;
         }
         Ok(())

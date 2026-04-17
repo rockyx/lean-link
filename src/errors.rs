@@ -45,6 +45,9 @@ pub enum Error {
     #[cfg(feature = "inspection")]
     #[error("Inspection Error: {0}")]
     Inspection(#[from] crate::service::inspection::InspectionError),
+    #[cfg(feature = "inspection")]
+    #[error("Detection Error: {0}")]
+    DetectorError(#[from] crate::service::inspection::detector::DetectorError),
 }
 
 #[cfg(feature = "web")]

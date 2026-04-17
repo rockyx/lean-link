@@ -217,8 +217,13 @@ impl AppState {
         let station_manager = StationManager::new_arc(db_conn.clone());
 
         #[cfg(feature = "inspection")]
-        let inspection_manager =
-            InspectionManager::new_arc(db_conn.clone(), camera_manager.clone(), station_manager.clone());
+        let inspection_manager = InspectionManager::new_arc(
+            db_conn.clone(),
+            camera_manager.clone(),
+            station_manager.clone(),
+            #[cfg(feature = "web")]
+            web_socket_server.clone(),
+        );
 
         Ok(Self {
             db_conn,
