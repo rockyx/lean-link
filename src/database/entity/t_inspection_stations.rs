@@ -82,6 +82,106 @@ impl sea_orm::sea_query::Nullable for TriggerMode {
     }
 }
 
+/// Inference output type
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub enum InferenceType {
+    /// Object detection only (bounding boxes)
+    #[default]
+    Detection,
+    /// Instance segmentation only (masks)
+    Segmentation,
+    /// Both detection and segmentation
+    DetectionAndSegmentation,
+    /// Pose estimation (keypoints)
+    Pose,
+    /// Classification only (no spatial info)
+    Classification,
+    /// Custom inference type
+    Custom,
+}
+
+impl InferenceType {
+    /// Check if this type includes detection output (bounding boxes)
+    pub fn has_detection(&self) -> bool {
+        matches!(
+            self,
+            InferenceType::Detection | InferenceType::DetectionAndSegmentation
+        )
+    }
+
+    /// Check if this type includes segmentation output (masks)
+    pub fn has_segmentation(&self) -> bool {
+        matches!(
+            self,
+            InferenceType::Segmentation | InferenceType::DetectionAndSegmentation
+        )
+    }
+
+    /// Check if this type includes pose output (keypoints)
+    pub fn has_pose(&self) -> bool {
+        matches!(self, InferenceType::Pose)
+    }
+}
+
+#[derive(Debug)]
+pub struct ParseInferenceTypeError;
+
+impl FromStr for InferenceType {
+    type Err = ParseInferenceTypeError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "Detection" => Ok(InferenceType::Detection),
+            "Segmentation" => Ok(InferenceType::Segmentation),
+            "DetectionAndSegmentation" => Ok(InferenceType::DetectionAndSegmentation),
+            "Pose" => Ok(InferenceType::Pose),
+            "Classification" => Ok(InferenceType::Classification),
+            "Custom" => Ok(InferenceType::Custom),
+            _ => Err(ParseInferenceTypeError),
+        }
+    }
+}
+
+impl From<InferenceType> for sea_orm::Value {
+    fn from(source: InferenceType) -> Self {
+        match source {
+            InferenceType::Detection => "Detection".into(),
+            InferenceType::Segmentation => "Segmentation".into(),
+            InferenceType::DetectionAndSegmentation => "DetectionAndSegmentation".into(),
+            InferenceType::Pose => "Pose".into(),
+            InferenceType::Classification => "Classification".into(),
+            InferenceType::Custom => "Custom".into(),
+        }
+    }
+}
+
+impl sea_orm::TryGetable for InferenceType {
+    fn try_get_by<I: sea_orm::ColIdx>(res: &QueryResult, index: I) -> Result<Self, TryGetError> {
+        <String as sea_orm::TryGetable>::try_get_by(res, index)
+            .map(|v| InferenceType::from_str(&v).unwrap_or(InferenceType::Detection))
+    }
+}
+
+impl sea_orm::sea_query::ValueType for InferenceType {
+    fn try_from(v: Value) -> Result<Self, ValueTypeErr> {
+        <String as sea_orm::sea_query::ValueType>::try_from(v)
+            .map(|v| InferenceType::from_str(&v).unwrap_or(InferenceType::Detection))
+    }
+
+    fn type_name() -> String {
+        stringify!(InferenceType).to_owned()
+    }
+
+    fn array_type() -> sea_orm::sea_query::ArrayType {
+        sea_orm::sea_query::ArrayType::String
+    }
+
+    fn column_type() -> ColumnType {
+        sea_orm::sea_query::ColumnType::String(StringLen::N(20))
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Serialize, Deserialize)]
 #[sea_orm(table_name = "t_inspection_stations")]
 #[serde(rename_all = "camelCase")]
@@ -124,6 +224,10 @@ pub struct Model {
 
     /// If true every detection is OK,and save images,
     pub acquisition_mode: bool,
+
+    /// Inference type
+    #[sea_orm(default_value = "Detection")]
+    pub inference_type: InferenceType,
 
     #[sea_orm(default_expr = "Expr::current_timestamp()")]
     #[serde(serialize_with = "to_local_time")]

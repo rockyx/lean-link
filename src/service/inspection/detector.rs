@@ -1,11 +1,89 @@
 use serde::{Deserialize, Serialize};
 
+use crate::database::entity::t_inspection_stations::InferenceType;
+
+/// Rectangular detection region (x, y, width, height)
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct BboxRegion {
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+}
+
+impl BboxRegion {
+    pub fn new(x: f32, y: f32, width: f32, height: f32) -> Self {
+        Self { x, y, width, height }
+    }
+
+    /// Get bottom-right coordinates
+    pub fn x2(&self) -> f32 {
+        self.x + self.width
+    }
+
+    /// Get bottom-right coordinates
+    pub fn y2(&self) -> f32 {
+        self.y + self.height
+    }
+
+    /// Calculate area
+    pub fn area(&self) -> f32 {
+        self.width * self.height
+    }
+}
+
+/// Segmentation mask region
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MaskRegion {
+    /// Mask data (binary mask, 0 or non-zero values)
+    pub mask: Vec<u8>,
+    /// Width of the mask
+    pub width: u32,
+    /// Height of the mask
+    pub height: u32,
+}
+
+impl MaskRegion {
+    pub fn new(mask: Vec<u8>, width: u32, height: u32) -> Self {
+        Self {
+            mask,
+            width,
+            height,
+        }
+    }
+
+    /// Create an empty mask
+    pub fn empty(width: u32, height: u32) -> Self {
+        Self {
+            mask: vec![0u8; (width * height) as usize],
+            width,
+            height,
+        }
+    }
+
+    /// Check if a point is inside the mask
+    pub fn contains(&self, x: u32, y: u32) -> bool {
+        if x >= self.width || y >= self.height {
+            return false;
+        }
+        self.mask[(y * self.width + x) as usize] != 0
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Detection {
     pub class_name: String,
     pub class_id: i32,
     pub confidence: f32,
+    /// Detection region (bounding box)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bbox: Option<BboxRegion>,
+    /// Segmentation region (mask)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mask: Option<MaskRegion>,
 }
 
 impl Detection {
@@ -14,6 +92,37 @@ impl Detection {
             class_name: class_name.into(),
             class_id,
             confidence,
+            bbox: None,
+            mask: None,
+        }
+    }
+
+    /// Create with bounding box region
+    pub fn with_bbox(mut self, x: f32, y: f32, width: f32, height: f32) -> Self {
+        self.bbox = Some(BboxRegion::new(x, y, width, height));
+        self
+    }
+
+    /// Create with mask region
+    pub fn with_mask(mut self, mask: Vec<u8>, width: u32, height: u32) -> Self {
+        self.mask = Some(MaskRegion::new(mask, width, height));
+        self
+    }
+
+    /// Create full detection with bbox and mask
+    pub fn new_full<S: Into<String>>(
+        class_name: S,
+        class_id: i32,
+        confidence: f32,
+        bbox: Option<BboxRegion>,
+        mask: Option<MaskRegion>,
+    ) -> Self {
+        Self {
+            class_name: class_name.into(),
+            class_id,
+            confidence,
+            bbox,
+            mask,
         }
     }
 
@@ -90,6 +199,11 @@ impl DetectionResult {
 pub trait Detector: Send + Sync {
     /// Get detector name
     fn name(&self) -> &str;
+
+    /// Get inference type
+    fn inference_type(&self) -> InferenceType {
+        InferenceType::default()
+    }
 
     /// Initialize the detector (load model, etc.)
     fn initialize(&mut self) -> Result<(), DetectorError>;

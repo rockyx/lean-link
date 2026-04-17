@@ -62,20 +62,19 @@ impl MigrationTrait for Migration {
                             .not_null()
                             .default(0.5),
                     )
-                    .col(
-                        ColumnDef::new(InspectionStations::SerialPort)
-                            .uuid()
-                            .null(),
-                    )
-                    .col(
-                        ColumnDef::new(InspectionStations::Modbus)
-                            .uuid()
-                            .null(),
-                    )
+                    .col(ColumnDef::new(InspectionStations::SerialPort).uuid().null())
+                    .col(ColumnDef::new(InspectionStations::Modbus).uuid().null())
                     .col(
                         ColumnDef::new(InspectionStations::AcquisitionMode)
-                        .boolean()
-                        .default(false),
+                            .boolean()
+                            .default(false),
+                    )
+                    .col(
+                        ColumnDef::new(InspectionStations::InferenceType)
+                            .string()
+                            .string_len(20)
+                            .not_null()
+                            .default("Detection"),
                     )
                     .col(
                         ColumnDef::new(InspectionStations::CreatedAt)
@@ -278,6 +277,7 @@ enum InspectionStations {
     SerialPort,
     Modbus,
     AcquisitionMode,
+    InferenceType,
     CreatedAt,
     UpdatedAt,
     DeletedAt,

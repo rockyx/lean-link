@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::database::entity::t_inspection_stations::InferenceType;
 #[cfg(feature = "inspection")]
 pub use crate::database::entity::t_inspection_stations::TriggerMode;
 #[cfg(feature = "inspection")]
@@ -395,6 +396,9 @@ pub struct StationConfig {
     #[serde(default)]
     pub modbus: Option<Uuid>,
 
+    /// Inferenct type
+    pub inference_type: InferenceType,
+
     /// if acquisition only
     #[serde(default)]
     pub acquisition_mode: bool,
@@ -567,6 +571,7 @@ mod tests {
             serial_port: None,
             modbus: None,
             acquisition_mode: false,
+            inference_type: InferenceType::Detection,
         };
 
         // Add ROI
@@ -619,6 +624,7 @@ mod tests {
             serial_port: None,
             modbus: None,
             acquisition_mode: false,
+            inference_type: InferenceType::Detection,
         };
 
         // get_all_rois should return empty when no rois configured

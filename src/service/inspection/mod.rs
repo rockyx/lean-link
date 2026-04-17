@@ -87,9 +87,12 @@ impl InspectionManager {
     }
 
     fn initializ_onnx(&self, station_config: &StationConfig) -> Result<(), errors::Error> {
-        if let Some(ref model_path) = station_config.model_path && !model_path.is_empty() {
+        if let Some(ref model_path) = station_config.model_path
+            && !model_path.is_empty()
+        {
             let mut onnx_inference =
-                OnnxInference::new(model_path.clone(), station_config.name.clone());
+                OnnxInference::new(model_path.clone(), station_config.name.clone())
+                    .with_inference_type(station_config.inference_type.clone());
             onnx_inference.initialize()?;
             self.onnx_inferences.insert(
                 station_config.id.clone(),

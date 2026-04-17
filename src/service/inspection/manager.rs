@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
+use crate::database::entity::t_inspection_stations::InferenceType;
 use crate::service::inspection::station::{RoiConfig, RoiShape, StationConfig, TriggerMode};
 use crate::{
     database::{
@@ -101,6 +102,7 @@ impl StationManager {
             serial_port: station.serial_port.clone(),
             modbus: station.modbus.clone(),
             acquisition_mode: station.acquisition_mode,
+            inference_type: station.inference_type,
         }
     }
 
@@ -181,6 +183,7 @@ impl StationManager {
             serial_port: request.serial_port,
             modbus: request.modbus,
             acquisition_mode: request.acquisition_mode,
+            inference_type: request.inference_type,
         };
 
         self.stations.insert(
@@ -228,7 +231,9 @@ impl StationManager {
         let model_path = request.model_path.clone().or(existing.model_path);
         let serial_port = request.serial_port.clone().or(existing.serial_port);
         let modbus = request.modbus.clone().or(existing.modbus);
-        let acquisition_mode = request.acquisition_mode.unwrap_or(existing.acquisition_mode);
+        let acquisition_mode = request
+            .acquisition_mode
+            .unwrap_or(existing.acquisition_mode);
 
         let detection_types = request.detection_types.clone().unwrap_or_else(|| {
             serde_json::from_value(existing.detection_types.clone()).unwrap_or_default()
@@ -462,6 +467,7 @@ pub struct StationCreateRequest {
     pub serial_port: Option<Uuid>,
     pub modbus: Option<Uuid>,
     pub acquisition_mode: bool,
+    pub inference_type: InferenceType,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
@@ -477,6 +483,7 @@ pub struct StationUpdateRequest {
     pub serial_port: Option<Uuid>,
     pub modbus: Option<Uuid>,
     pub acquisition_mode: Option<bool>,
+    pub inference_type: InferenceType,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -511,6 +518,7 @@ pub struct StationResponse {
     pub serial_port: Option<Uuid>,
     pub modbus: Option<Uuid>,
     pub acquisition_mode: bool,
+    pub inferenct_type: InferenceType,
     pub rois: Vec<RoiConfig>,
 }
 
@@ -528,8 +536,8 @@ impl From<ManagedStation> for StationResponse {
             serial_port: managed.config.serial_port,
             modbus: managed.config.modbus,
             acquisition_mode: managed.config.acquisition_mode,
+            inferenct_type: managed.config.inference_type,
             rois: managed.rois,
         }
     }
 }
-
