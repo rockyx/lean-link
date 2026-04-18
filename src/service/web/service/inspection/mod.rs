@@ -1,6 +1,15 @@
 use actix_web::scope;
+use serde::Deserialize;
+use uuid::Uuid;
 
 pub mod station;
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TestStationRequest {
+    pub station_id: Uuid,
+    pub image_path: String,
+}
 
 #[scope("/inspection")]
 pub mod api {
@@ -10,6 +19,8 @@ pub mod api {
         AppState, errors,
         service::{inspection::config::InspectionSettings, web::service::WebResponse},
     };
+
+    use super::TestStationRequest;
 
     #[post("/initialize")]
     pub async fn initialize(
@@ -40,5 +51,18 @@ pub mod api {
         let inspection = app_state.inspection_manager.get_inspection().await;
 
         Ok(WebResponse::with_result(inspection).into())
+    }
+
+    #[post("/test-station")]
+    pub async fn test_station(
+        app_state: web::Data<AppState>,
+        req: web::Json<TestStationRequest>,
+    ) -> actix_web::Result<web::Json<WebResponse<()>>, errors::Error> {
+        app_state
+            .inspection_manager
+            .test_station(&req.station_id, &req.image_path)
+            .await?;
+
+        Ok(WebResponse::with_result(()).into())
     }
 }

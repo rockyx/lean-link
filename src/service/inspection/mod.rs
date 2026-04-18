@@ -1,10 +1,12 @@
 use std::collections::HashSet;
+use std::io::Cursor;
 use std::path::Path;
 use std::sync::Arc;
 
 use dashmap::DashMap;
-use ::image::ImageReader;
+use ::image::{DynamicImage, ImageFormat, Rgb, RgbImage};
 use sea_orm::{ActiveValue, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
+use serde::{Deserialize, Serialize};
 use tokio::select;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::{Mutex, RwLock, mpsc};
@@ -13,9 +15,10 @@ use uuid::Uuid;
 
 use crate::database::entity::prelude::TSettings;
 use crate::database::entity::t_settings;
-use crate::service::camera::{CameraFrame, GrabMode};
+use crate::service::camera::{CameraFrame, FrameEncoding, GrabMode};
 use crate::service::inspection::config::InspectionSettings;
-use crate::service::inspection::detector::{Detector, DetectorError};
+use crate::service::inspection::detector::{Detector, DetectorError, DetectionResult};
+use crate::service::inspection::image::InferenceImage;
 use crate::service::inspection::manager::ManagedStation;
 use crate::service::inspection::station::{StationConfig, TriggerMode};
 use crate::service::inspection::yolo::OnnxInference;
@@ -23,6 +26,9 @@ use crate::{
     errors,
     service::{camera::manager::ArcCameraManager, inspection::manager::ArcStationManager},
 };
+
+#[cfg(feature = "web")]
+use tokio_tungstenite::tungstenite::Message;
 
 pub mod config;
 pub mod detector;
@@ -33,11 +39,61 @@ pub mod yolo;
 
 mod keys {
     pub const INSPECTION: &str = "inspection.settings";
+    pub const INSPECTION_RESULT_TOPIC: &str = "inspection/result";
 }
+
+/// Magic bytes for inspection result identification
+pub const INSPECTION_RESULT_MAGIC: &[u8] = b"INSP";
 
 pub enum InspectionEvent {
     OneTrigger(Uuid),
     ContinueTrigger(Uuid, CameraFrame),
+}
+
+/// Inspection result header for WebSocket binary transmission
+/// Format: [4 bytes magic "INSP"][4 bytes header length (BE u32)][JSON header][binary JPEG data]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InspectionResultHeader {
+    pub topic: String,
+    pub station_id: Uuid,
+    pub station_name: String,
+    pub encoding: FrameEncoding,
+    pub is_ok: bool,
+    pub detections: Vec<crate::service::inspection::detector::Detection>,
+    pub processing_time_ms: u64,
+    pub image_width: u32,
+    pub image_height: u32,
+    pub data_length: usize,
+}
+
+/// Inspection result payload for WebSocket transmission
+#[derive(Clone, Debug)]
+pub struct InspectionResultPayload {
+    pub header: InspectionResultHeader,
+    pub data: Vec<u8>,
+}
+
+impl InspectionResultPayload {
+    pub fn to_binary(&self) -> Vec<u8> {
+        let json_bytes = match serde_json::to_vec(&self.header) {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                tracing::error!("Failed to serialize inspection result header: {}", e);
+                return Vec::new();
+            }
+        };
+
+        let total_size = INSPECTION_RESULT_MAGIC.len() + 4 + json_bytes.len() + self.data.len();
+        let mut buffer = Vec::with_capacity(total_size);
+
+        buffer.extend_from_slice(INSPECTION_RESULT_MAGIC);
+        buffer.extend_from_slice(&(json_bytes.len() as u32).to_be_bytes());
+        buffer.extend_from_slice(&json_bytes);
+        buffer.extend_from_slice(&self.data);
+
+        buffer
+    }
 }
 
 pub struct InspectionManager {
@@ -380,28 +436,112 @@ impl InspectionManager {
         station_id: &Uuid,
         image_path: &str,
     ) -> Result<(), errors::Error> {
-        if let Some(managed_station) = self.station_manager.get_station(*station_id) {
-            self.initializ_onnx(&managed_station.config)?;
+        let managed_station = self
+            .station_manager
+            .get_station(*station_id)
+            .ok_or_else(|| {
+                errors::Error::from(DetectorError::InvalidInput("工作站不存在".to_string()))
+            })?;
 
-            let image_path = Path::new(image_path);
-            if !image_path.exists() {
-                return Err(
-                    DetectorError::InvalidInput(format!("图像不存在: {:?}", image_path)).into(),
-                );
-            }
+        self.initializ_onnx(&managed_station.config)?;
 
-            // let img = ImageReader::open(image_path)?.decode()?;
+        let image_path = Path::new(image_path);
+        if !image_path.exists() {
+            return Err(
+                DetectorError::InvalidInput(format!("图像不存在: {:?}", image_path)).into(),
+            );
+        }
 
-            // let onnx_inference = match self.onnx_inferences.get(&managed_station.config.id) {
-            //     Some(oi) => {
-            //         Some(oi.value().clone())
-            //     },
-            //     None => None,
-            // }
-            // Self::inference(managed_station.clone(), onnx_inference).await?
+        let inference_image = InferenceImage::from_file(image_path)?;
+
+        // Run ONNX detection
+        let detection_result = {
+            let onnx_inference = self
+                .onnx_inferences
+                .get(&managed_station.config.id)
+                .ok_or_else(|| {
+                    DetectorError::NotInitialized
+                })?;
+            let mut onnx = onnx_inference.value().lock().await;
+            onnx.detect(&inference_image)?
+        };
+
+        // Draw detection results on the image
+        let annotated_image =
+            Self::draw_detections(&inference_image, &detection_result);
+
+        // Encode to JPEG
+        let mut jpeg_bytes = Vec::new();
+        let mut cursor = Cursor::new(&mut jpeg_bytes);
+        annotated_image
+            .write_to(&mut cursor, ImageFormat::Jpeg)
+            .map_err(|e| DetectorError::Internal(format!("JPEG编码失败: {}", e)))?;
+
+        // Send result via WebSocket (same format as normal inspection, just skip DB save)
+        #[cfg(feature = "web")]
+        {
+            let payload = InspectionResultPayload {
+                header: InspectionResultHeader {
+                    topic: keys::INSPECTION_RESULT_TOPIC.to_string(),
+                    station_id: managed_station.config.id,
+                    station_name: managed_station.config.name.clone(),
+                    encoding: FrameEncoding::Jpeg,
+                    is_ok: detection_result.is_ok,
+                    detections: detection_result.detections.clone(),
+                    processing_time_ms: detection_result.processing_time_ms,
+                    image_width: detection_result.image_width,
+                    image_height: detection_result.image_height,
+                    data_length: jpeg_bytes.len(),
+                },
+                data: jpeg_bytes,
+            };
+
+            let binary_data = payload.to_binary();
+            let _ = self
+                .ws_server
+                .broadcast(Message::Binary(binary_data.into()))
+                .await;
         }
 
         Ok(())
+    }
+
+    /// Draw bounding boxes on the image based on detection results
+    fn draw_detections(
+        inference_image: &InferenceImage,
+        detection_result: &DetectionResult,
+    ) -> DynamicImage {
+        let mut img = RgbImage::from_raw(
+            inference_image.width,
+            inference_image.height,
+            inference_image.data.to_vec(),
+        )
+        .expect("Invalid image buffer");
+
+        for detection in &detection_result.detections {
+            let color = if detection.is_ok() {
+                Rgb([0, 200, 0]) // Green for OK
+            } else {
+                Rgb([255, 0, 0]) // Red for NG
+            };
+
+            if let Some(ref bbox) = detection.bbox {
+                let x1 = bbox.x.max(0.0) as i32;
+                let y1 = bbox.y.max(0.0) as i32;
+                let x2 = (bbox.x + bbox.width).min(inference_image.width as f32) as i32;
+                let y2 = (bbox.y + bbox.height).min(inference_image.height as f32) as i32;
+
+                // Draw bounding box with line thickness
+                let line_thickness = ((inference_image.width.max(inference_image.height) as f32
+                    / 400.0)
+                    .max(1.0)
+                    .min(3.0)) as i32;
+                
+                draw_rect(&mut img, x1, y1, x2, y2, color, line_thickness);
+            }
+        }
+
+        DynamicImage::ImageRgb8(img)
     }
 }
 
@@ -423,3 +563,47 @@ impl std::fmt::Display for InspectionError {
 }
 
 impl std::error::Error for InspectionError {}
+
+/// Draw a rectangle outline on the image with specified line thickness
+fn draw_rect(img: &mut RgbImage, x1: i32, y1: i32, x2: i32, y2: i32, color: Rgb<u8>, thickness: i32) {
+    let width = img.width() as i32;
+    let height = img.height() as i32;
+
+    // Draw top and bottom lines (with thickness)
+    for t in 0..thickness {
+        let y_top = y1 + t;
+        let y_bottom = y2 - t;
+        
+        // Top line
+        if y_top >= 0 && y_top < height {
+            for x in x1.max(0)..=x2.min(width - 1) {
+                img.put_pixel(x as u32, y_top as u32, color);
+            }
+        }
+        // Bottom line
+        if y_bottom >= 0 && y_bottom < height {
+            for x in x1.max(0)..=x2.min(width - 1) {
+                img.put_pixel(x as u32, y_bottom as u32, color);
+            }
+        }
+    }
+
+    // Draw left and right lines (with thickness)
+    for t in 0..thickness {
+        let x_left = x1 + t;
+        let x_right = x2 - t;
+        
+        // Left line
+        if x_left >= 0 && x_left < width {
+            for y in (y1 + thickness).max(0)..=(y2 - thickness).min(height - 1) {
+                img.put_pixel(x_left as u32, y as u32, color);
+            }
+        }
+        // Right line
+        if x_right >= 0 && x_right < width {
+            for y in (y1 + thickness).max(0)..=(y2 - thickness).min(height - 1) {
+                img.put_pixel(x_right as u32, y as u32, color);
+            }
+        }
+    }
+}
