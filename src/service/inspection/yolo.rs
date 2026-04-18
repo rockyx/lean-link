@@ -545,7 +545,13 @@ impl OnnxInference {
     }
 
     /// Post-process YOLO detection output
-    /// Output format: [1, 4 + num_classes, num_detections] or [1, 4 + num_classes + num_masks, num_detections]
+    /// Supports two output formats:
+    /// 1. Standard YOLO format: [1, 4+num_classes, num_detections] (e.g., [1, 8, 8400])
+    ///    - Requires NMS post-processing
+    ///    - Bounding box in (cx, cy, w, h) format
+    /// 2. One-to-One format (YOLOv10/YOLO11 one2one): [1, num_detections, 6] (e.g., [1, 300, 6])
+    ///    - No NMS required, results pre-sorted by confidence
+    ///    - Each detection: [x1, y1, x2, y2, confidence, class_id]
     fn postprocess(
         &self,
         output_data: Vec<f32>,
@@ -562,8 +568,124 @@ impl OnnxInference {
 
         // Parse output dimensions
         let output_info = &self.output_infos[0];
-        let num_detections = output_info.dimensions[2] as usize;
-        let data_per_detection = output_info.dimensions[1] as usize;
+        let dim1 = output_info.dimensions[1] as usize;
+        let dim2 = output_info.dimensions[2] as usize;
+
+        // Detect output format based on dimension relationship
+        // Standard YOLO: dim1 (4+classes) < dim2 (detections), e.g., [1, 8, 8400]
+        // One-to-One: dim1 (detections) > dim2 (6), e.g., [1, 300, 6]
+        let is_one_to_one_format = dim1 > dim2 && dim2 == 6;
+
+        if is_one_to_one_format {
+            // One-to-One format: [1, num_detections, 6]
+            // Each row: [x1, y1, x2, y2, confidence, class_id]
+            self.postprocess_one_to_one(
+                output_data,
+                dim1, // num_detections
+                original_width,
+                original_height,
+                scale,
+                pad_x,
+                pad_y,
+                confidence_threshold,
+            )
+        } else {
+            // Standard YOLO format: [1, 4+classes, detections]
+            self.postprocess_standard(
+                output_data,
+                mask_proto,
+                dim1, // data_per_detection (4 + num_classes)
+                dim2, // num_detections
+                original_width,
+                original_height,
+                scale,
+                pad_x,
+                pad_y,
+                confidence_threshold,
+                iou_threshold,
+            )
+        }
+    }
+
+    /// Post-process One-to-One format output (YOLOv10/YOLO11 one2one)
+    /// Format: [1, num_detections, 6] where each detection is [x1, y1, x2, y2, confidence, class_id]
+    fn postprocess_one_to_one(
+        &self,
+        output_data: Vec<f32>,
+        num_detections: usize,
+        original_width: u32,
+        original_height: u32,
+        scale: f32,
+        pad_x: u32,
+        pad_y: u32,
+        confidence_threshold: f32,
+    ) -> Result<Vec<Detection>, DetectorError> {
+        let mut detections = Vec::new();
+
+        // Results are pre-sorted by confidence, process in order
+        for i in 0..num_detections {
+            let base_idx = i * 6;
+
+            let x1 = output_data[base_idx];
+            let y1 = output_data[base_idx + 1];
+            let x2 = output_data[base_idx + 2];
+            let y2 = output_data[base_idx + 3];
+            let confidence = output_data[base_idx + 4];
+            let class_id = output_data[base_idx + 5] as usize;
+
+            // Skip low confidence detections
+            if confidence < confidence_threshold {
+                continue;
+            }
+
+            // Skip invalid detections (zeros indicate padding)
+            if x1 == 0.0 && y1 == 0.0 && x2 == 0.0 && y2 == 0.0 {
+                continue;
+            }
+
+            // Scale bbox back to original image coordinates
+            let x1 = (x1 - pad_x as f32) / scale;
+            let y1 = (y1 - pad_y as f32) / scale;
+            let x2 = (x2 - pad_x as f32) / scale;
+            let y2 = (y2 - pad_y as f32) / scale;
+
+            // Clamp to image bounds
+            let x1 = x1.clamp(0.0, original_width as f32);
+            let y1 = y1.clamp(0.0, original_height as f32);
+            let x2 = x2.clamp(0.0, original_width as f32);
+            let y2 = y2.clamp(0.0, original_height as f32);
+
+            let class_name = self
+                .class_names
+                .get(&class_id)
+                .cloned()
+                .unwrap_or_else(|| format!("class_{}", class_id));
+
+            let mut detection = Detection::new(class_name, class_id as i32, confidence);
+            detection.bbox = Some(BboxRegion::new(x1, y1, x2 - x1, y2 - y1));
+            detections.push(detection);
+        }
+
+        Ok(detections)
+    }
+
+    /// Post-process standard YOLO format output
+    /// Format: [1, 4+num_classes, num_detections] with (cx, cy, w, h) bbox format
+    fn postprocess_standard(
+        &self,
+        output_data: Vec<f32>,
+        mask_proto: Option<Vec<f32>>,
+        data_per_detection: usize,
+        num_detections: usize,
+        original_width: u32,
+        original_height: u32,
+        scale: f32,
+        pad_x: u32,
+        pad_y: u32,
+        confidence_threshold: f32,
+        iou_threshold: f32,
+    ) -> Result<Vec<Detection>, DetectorError> {
+        let input_info = self.input_info.as_ref().ok_or(DetectorError::NotInitialized)?;
 
         // Determine number of classes based on inference type
         let num_classes = if self.inference_type == InferenceType::Segmentation {

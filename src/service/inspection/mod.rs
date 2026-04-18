@@ -48,7 +48,7 @@ pub struct InspectionManager {
     camera_to_stations: Arc<DashMap<Uuid, HashSet<Uuid>>>,
     inspection: RwLock<InspectionSettings>,
     class_to_detection_type: Arc<DashMap<String, String>>,
-    onnx_inferences: DashMap<Uuid, Arc<Mutex<OnnxInference>>>,
+    onnx_inferences: Arc<DashMap<Uuid, Arc<Mutex<OnnxInference>>>>,
     #[cfg(feature = "web")]
     ws_server: crate::service::websocket::ArcWebSocketServer,
 }
@@ -68,7 +68,7 @@ impl InspectionManager {
             camera_to_stations: Arc::new(DashMap::new()),
             inspection: RwLock::new(InspectionSettings::default()),
             class_to_detection_type: Arc::new(DashMap::new()),
-            onnx_inferences: DashMap::new(),
+            onnx_inferences: Arc::new(DashMap::new()),
             #[cfg(feature = "web")]
             ws_server,
         }
@@ -225,17 +225,20 @@ impl InspectionManager {
         let camera_manager = self.camera_manager.clone();
         let camera_to_stations = self.camera_to_stations.clone();
         let class_to_detection_type = self.class_to_detection_type.clone();
+        let onnx_inferences = self.onnx_inferences.clone();
         tokio::spawn(async move {
             loop {
                 let station_manager = station_manager.clone();
                 let camera_manager = camera_manager.clone();
                 let class_to_detection_type = class_to_detection_type.clone();
+                let onnx_inferences = onnx_inferences.clone();
                 select! {
                     _ = cloned_token.cancelled() => {
                         if let Err(e) = camera_manager.close_all().await {
                             tracing::error!("Close All Camera error: {:?}", e);
                         }
                         camera_to_stations.clear();
+                        onnx_inferences.clear();
                         break;
                     }
 
