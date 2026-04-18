@@ -104,7 +104,7 @@ modbus = ["tokio-modbus", "serialport"]
 socket = ["tokio-tungstenite"]
 websocket = ["tokio-tungstenite"]
 industry-camera = []
-inspection = ["industry-camera"]
+inspection = ["industry-camera", "serialport", "modbus", "web"]
 all = [
     "postgres",
     "web",

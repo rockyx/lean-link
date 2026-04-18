@@ -89,10 +89,8 @@ pub enum InferenceType {
     /// Object detection only (bounding boxes)
     #[default]
     Detection,
-    /// Instance segmentation only (masks)
+    /// Instance segmentation only (masks with bounding boxes)
     Segmentation,
-    /// Both detection and segmentation
-    DetectionAndSegmentation,
     /// Pose estimation (keypoints)
     Pose,
     /// Classification only (no spatial info)
@@ -102,25 +100,34 @@ pub enum InferenceType {
 }
 
 impl InferenceType {
-    /// Check if this type includes detection output (bounding boxes)
-    pub fn has_detection(&self) -> bool {
+    /// Check if this type outputs bounding boxes
+    pub fn has_bbox(&self) -> bool {
         matches!(
             self,
-            InferenceType::Detection | InferenceType::DetectionAndSegmentation
+            InferenceType::Detection | InferenceType::Segmentation | InferenceType::Pose
         )
+    }
+
+    /// Check if this type outputs segmentation masks
+    pub fn has_mask(&self) -> bool {
+        matches!(self, InferenceType::Segmentation)
+    }
+
+    /// Check if this type outputs keypoints
+    pub fn has_keypoints(&self) -> bool {
+        matches!(self, InferenceType::Pose)
+    }
+
+    /// Check if this type includes detection output (bounding boxes)
+    /// Alias for has_bbox() for backward compatibility
+    pub fn has_detection(&self) -> bool {
+        self.has_bbox()
     }
 
     /// Check if this type includes segmentation output (masks)
+    /// Alias for has_mask() for backward compatibility  
     pub fn has_segmentation(&self) -> bool {
-        matches!(
-            self,
-            InferenceType::Segmentation | InferenceType::DetectionAndSegmentation
-        )
-    }
-
-    /// Check if this type includes pose output (keypoints)
-    pub fn has_pose(&self) -> bool {
-        matches!(self, InferenceType::Pose)
+        self.has_mask()
     }
 }
 
@@ -134,7 +141,6 @@ impl FromStr for InferenceType {
         match s {
             "Detection" => Ok(InferenceType::Detection),
             "Segmentation" => Ok(InferenceType::Segmentation),
-            "DetectionAndSegmentation" => Ok(InferenceType::DetectionAndSegmentation),
             "Pose" => Ok(InferenceType::Pose),
             "Classification" => Ok(InferenceType::Classification),
             "Custom" => Ok(InferenceType::Custom),
@@ -148,7 +154,6 @@ impl From<InferenceType> for sea_orm::Value {
         match source {
             InferenceType::Detection => "Detection".into(),
             InferenceType::Segmentation => "Segmentation".into(),
-            InferenceType::DetectionAndSegmentation => "DetectionAndSegmentation".into(),
             InferenceType::Pose => "Pose".into(),
             InferenceType::Classification => "Classification".into(),
             InferenceType::Custom => "Custom".into(),

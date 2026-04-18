@@ -2,6 +2,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::database::entity::t_inspection_stations::InferenceType;
 
+use super::image::InferenceImage;
+
 /// Rectangular detection region (x, y, width, height)
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -211,25 +213,14 @@ pub trait Detector: Send + Sync {
     /// Check if detector is initialized
     fn is_initialized(&self) -> bool;
 
-    /// Perform detection on image data
-    /// 
+    /// Perform detection on image
+    ///
     /// # Arguments
-    /// * `image_data` - Raw image bytes (e.g., Mono8, RGB8)
-    /// * `width` - Image width in pixels
-    /// * `height` - Image height in pixels
-    /// * `channels` - Number of color channels (1 for Mono8, 3 for RGB)
-    /// * `confidence_threshold` - Minimum confidence for detections
-    fn detect(
-        &mut self,
-        image_data: &[u8],
-        width: u32,
-        height: u32,
-        channels: u32,
-        confidence_threshold: f32,
-    ) -> Result<DetectionResult, DetectorError>;
+    /// * `image` - InferenceImage containing RGB8 image data
+    fn detect(&mut self, image: &InferenceImage) -> Result<DetectionResult, DetectorError>;
 
-    /// Get supported class names
-    fn get_class_names(&self) -> Vec<&str>;
+    /// Get supported class names as HashMap<ClassId, ClassName>
+    fn get_class_names(&self) -> std::collections::HashMap<usize, String>;
 
     /// Shutdown the detector and release resources
     fn shutdown(&mut self) -> Result<(), DetectorError>;

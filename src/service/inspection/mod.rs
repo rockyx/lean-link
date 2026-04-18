@@ -1,7 +1,9 @@
 use std::collections::HashSet;
+use std::path::Path;
 use std::sync::Arc;
 
 use dashmap::DashMap;
+use ::image::ImageReader;
 use sea_orm::{ActiveValue, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
 use tokio::select;
 use tokio::sync::mpsc::Sender;
@@ -13,7 +15,7 @@ use crate::database::entity::prelude::TSettings;
 use crate::database::entity::t_settings;
 use crate::service::camera::{CameraFrame, GrabMode};
 use crate::service::inspection::config::InspectionSettings;
-use crate::service::inspection::detector::Detector;
+use crate::service::inspection::detector::{Detector, DetectorError};
 use crate::service::inspection::manager::ManagedStation;
 use crate::service::inspection::station::{StationConfig, TriggerMode};
 use crate::service::inspection::yolo::OnnxInference;
@@ -24,6 +26,7 @@ use crate::{
 
 pub mod config;
 pub mod detector;
+pub mod image;
 pub mod manager;
 pub mod station;
 pub mod yolo;
@@ -359,11 +362,42 @@ impl InspectionManager {
         });
     }
 
-    fn inference(managed_station: &ManagedStation) -> Result<(), errors::Error> {
+    async fn inference(
+        managed_station: ManagedStation,
+        onnx_inference: Option<Arc<Mutex<OnnxInference>>>,
+    ) -> Result<(), errors::Error> {
+        if let Some(onnx_inference) = onnx_inference {
+            let mut onnx_inference = onnx_inference.lock().await;
+        }
         Ok(())
     }
 
-    pub async fn test_station(&self, station_id: &Uuid) -> Result<(), errors::Error> {
+    pub async fn test_station(
+        &self,
+        station_id: &Uuid,
+        image_path: &str,
+    ) -> Result<(), errors::Error> {
+        if let Some(managed_station) = self.station_manager.get_station(*station_id) {
+            self.initializ_onnx(&managed_station.config)?;
+
+            let image_path = Path::new(image_path);
+            if !image_path.exists() {
+                return Err(
+                    DetectorError::InvalidInput(format!("图像不存在: {:?}", image_path)).into(),
+                );
+            }
+
+            // let img = ImageReader::open(image_path)?.decode()?;
+
+            // let onnx_inference = match self.onnx_inferences.get(&managed_station.config.id) {
+            //     Some(oi) => {
+            //         Some(oi.value().clone())
+            //     },
+            //     None => None,
+            // }
+            // Self::inference(managed_station.clone(), onnx_inference).await?
+        }
+
         Ok(())
     }
 }
