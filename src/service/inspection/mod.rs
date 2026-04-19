@@ -13,8 +13,8 @@ use tokio::sync::{Mutex, RwLock, mpsc};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-use crate::database::entity::prelude::TSettings;
-use crate::database::entity::t_settings;
+use crate::database::entity::prelude::{TDefectDetails, TInspectionDetails, TInspectionRecords, TSettings};
+use crate::database::entity::{t_defect_details, t_inspection_details, t_inspection_records, t_settings};
 use crate::service::camera::{CameraFrame, FrameEncoding, GrabMode};
 use crate::service::inspection::config::InspectionSettings;
 use crate::service::inspection::detector::{DetectionResult, Detector, DetectorError};
@@ -307,6 +307,7 @@ impl InspectionManager {
         let class_to_detection_type = self.class_to_detection_type.clone();
         let onnx_inferences = self.onnx_inferences.clone();
         let ws_server = self.ws_server.clone();
+        let db_conn = self.db_conn.clone();
         tokio::spawn(async move {
             loop {
                 let station_manager = station_manager.clone();
@@ -314,6 +315,7 @@ impl InspectionManager {
                 let class_to_detection_type = class_to_detection_type.clone();
                 let onnx_inferences = onnx_inferences.clone();
                 let ws_server = ws_server.clone();
+                let db_conn = db_conn.clone();
                 select! {
                     _ = cloned_token.cancelled() => {
                         if let Err(e) = camera_manager.close_all().await {
@@ -330,6 +332,7 @@ impl InspectionManager {
                                     // 手动触发
                                     InspectionEvent::OneTrigger(station_id) => {
                                         Self::on_one_trigger(
+                                            db_conn,
                                             camera_manager,
                                             station_manager,
                                             station_id,
@@ -453,6 +456,201 @@ impl InspectionManager {
         }
     }
 
+    /// Save inspection result to database (t_inspection_records, t_inspection_details, t_defect_details)
+    async fn save_inspection_result(
+        db_conn: &DatabaseConnection,
+        managed_station: &ManagedStation,
+        _camera_frame: &CameraFrame,
+        detection_result: &DetectionResult,
+        class_to_detection_type: &DashMap<String, DetectionType>,
+    ) -> Result<(), errors::Error> {
+        let record_id = Uuid::now_v7();
+        let now = chrono::Utc::now();
+
+        let overall_result = if detection_result.is_ok {
+            "OK"
+        } else {
+            "NG"
+        };
+
+        let avg_confidence = if detection_result.detections.is_empty() {
+            None
+        } else {
+            let sum: f32 = detection_result.detections.iter().map(|d| d.confidence).sum();
+            Some(
+                sea_orm::prelude::Decimal::from_f32_retain(sum / detection_result.detections.len() as f32)
+                    .unwrap_or_default(),
+            )
+        };
+
+        let trigger_mode_str = match managed_station.config.trigger_mode {
+            TriggerMode::External => "External",
+            TriggerMode::Serial => "Serial",
+            TriggerMode::Continuous => "Continuous",
+            TriggerMode::Manual => "Manual",
+        };
+
+        // Insert t_inspection_records
+        let record_model = t_inspection_records::ActiveModel {
+            id: ActiveValue::set(record_id),
+            station_id: ActiveValue::set(managed_station.config.id.to_string()),
+            camera_id: ActiveValue::set(Some(managed_station.config.camera_id.to_string())),
+            product_serial: ActiveValue::set(None),
+            batch_number: ActiveValue::set(None),
+            overall_result: ActiveValue::set(overall_result.to_string()),
+            confidence_score: ActiveValue::set(avg_confidence),
+            inspection_time: ActiveValue::set(sea_orm::prelude::DateTimeWithTimeZone::from(
+                now.with_timezone(&chrono::FixedOffset::east_opt(8 * 3600).expect("Valid offset")),
+            )),
+            processing_time_ms: ActiveValue::set(Some(detection_result.processing_time_ms as i32)),
+            trigger_mode: ActiveValue::set(trigger_mode_str.to_string()),
+            detection_types: ActiveValue::set(Some(serde_json::json!(
+                managed_station.config.detection_types
+            ))),
+            image_paths: ActiveValue::set(None),
+            video_path: ActiveValue::set(None),
+            firmware_version: ActiveValue::set(None),
+            software_version: ActiveValue::set(None),
+            model_version: ActiveValue::set(None),
+            temperature: ActiveValue::set(None),
+            humidity: ActiveValue::set(None),
+            lighting_condition: ActiveValue::set(None),
+            ..Default::default()
+        };
+        TInspectionRecords::insert(record_model)
+            .exec(db_conn)
+            .await?;
+
+        // Insert t_inspection_details and t_defect_details for each detection
+        for detection in &detection_result.detections {
+            let detail_id = Uuid::now_v7();
+
+            let result = if detection.is_ok() { "OK" } else { "NG" };
+
+            let confidence = sea_orm::prelude::Decimal::from_f32_retain(detection.confidence)
+                .unwrap_or_default();
+
+            let measurements = if let Some(ref bbox) = detection.bbox {
+                serde_json::json!({
+                    "x": bbox.x,
+                    "y": bbox.y,
+                    "width": bbox.width,
+                    "height": bbox.height,
+                })
+            } else {
+                serde_json::json!({})
+            };
+
+            // Get detection type by stripping OK/NG suffix from class_name
+            let base_class_name = detection
+                .class_name
+                .strip_suffix("OK")
+                .or_else(|| detection.class_name.strip_suffix("NG"))
+                .unwrap_or(&detection.class_name);
+
+            let detection_type = class_to_detection_type
+                .get(base_class_name)
+                .map(|item| item.id.clone())
+                .unwrap_or_else(|| base_class_name.to_string());
+
+            let (failure_type, failure_code, failure_description, failure_severity) =
+                if detection.is_ng() {
+                    (
+                        ActiveValue::set(Some(detection_type.clone())),
+                        ActiveValue::set(None),
+                        ActiveValue::set(None),
+                        ActiveValue::set(Some("HIGH".to_string())),
+                    )
+                } else {
+                    (
+                        ActiveValue::set(None),
+                        ActiveValue::set(None),
+                        ActiveValue::set(None),
+                        ActiveValue::set(None),
+                    )
+                };
+
+            let detail_model = t_inspection_details::ActiveModel {
+                id: ActiveValue::set(detail_id),
+                inspection_id: ActiveValue::set(record_id),
+                detection_type: ActiveValue::set(detection_type),
+                component_id: ActiveValue::set(detection.class_id.to_string()),
+                component_name: ActiveValue::set(Some(detection.class_name.clone())),
+                result: ActiveValue::set(result.to_string()),
+                confidence_score: ActiveValue::set(Some(confidence)),
+                measurements: ActiveValue::set(measurements),
+                failure_type,
+                failure_code,
+                failure_description,
+                failure_severity,
+                roi_id: ActiveValue::set(None),
+                roi_type: ActiveValue::set(None),
+                ..Default::default()
+            };
+            TInspectionDetails::insert(detail_model)
+                .exec(db_conn)
+                .await?;
+
+            // Insert t_defect_details for NG detections with bbox
+            if detection.is_ng() {
+                if let Some(ref bbox) = detection.bbox {
+                    let bbox_json = serde_json::json!({
+                        "x": bbox.x,
+                        "y": bbox.y,
+                        "width": bbox.width,
+                        "height": bbox.height,
+                    });
+
+                    let position_x = sea_orm::prelude::Decimal::from_f32_retain(bbox.x)
+                        .unwrap_or_default();
+                    let position_y = sea_orm::prelude::Decimal::from_f32_retain(bbox.y)
+                        .unwrap_or_default();
+                    let area = sea_orm::prelude::Decimal::from_f32_retain(bbox.area())
+                        .unwrap_or_default();
+                    let defect_confidence =
+                        sea_orm::prelude::Decimal::from_f32_retain(detection.confidence)
+                            .unwrap_or_default();
+
+                    // Get defect_type from class_to_detection_type using base_class_name
+                    let defect_type = class_to_detection_type
+                        .get(base_class_name)
+                        .map(|item| item.id.clone())
+                        .unwrap_or_else(|| base_class_name.to_string());
+
+                    let defect_model = t_defect_details::ActiveModel {
+                        id: ActiveValue::set(Uuid::now_v7()),
+                        inspection_detail_id: ActiveValue::set(detail_id),
+                        defect_type: ActiveValue::set(defect_type),
+                        defect_code: ActiveValue::set(None),
+                        description: ActiveValue::set(None),
+                        position_x: ActiveValue::set(Some(position_x)),
+                        position_y: ActiveValue::set(Some(position_y)),
+                        bounding_box: ActiveValue::set(Some(bbox_json)),
+                        polygon_points: ActiveValue::set(None),
+                        severity_score: ActiveValue::set(Some(defect_confidence)),
+                        area: ActiveValue::set(Some(area)),
+                        length: ActiveValue::set(Some(
+                            sea_orm::prelude::Decimal::from_f32_retain(bbox.width)
+                                .unwrap_or_default(),
+                        )),
+                        width: ActiveValue::set(Some(
+                            sea_orm::prelude::Decimal::from_f32_retain(bbox.height)
+                                .unwrap_or_default(),
+                        )),
+                        confidence: ActiveValue::set(Some(defect_confidence)),
+                        repair_suggestion: ActiveValue::set(None),
+                        ..Default::default()
+                    };
+                    TDefectDetails::insert(defect_model)
+                        .exec(db_conn)
+                        .await?;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     /// Create a new station and initialize ONNX if model path is provided
     pub async fn create_station(
         &self,
@@ -525,10 +723,11 @@ impl InspectionManager {
     }
 
     async fn inference_camera_frame(
+        db_conn: DatabaseConnection,
         managed_station: ManagedStation,
         camera_frame: CameraFrame,
-        station_manager: ArcStationManager,
-        station_id: Uuid,
+        _station_manager: ArcStationManager,
+        _station_id: Uuid,
         class_to_detection_type: Arc<DashMap<String, DetectionType>>,
         onnx_inferences: Arc<DashMap<Uuid, Arc<Mutex<OnnxInference>>>>,
         #[cfg(feature = "web")] ws_server: crate::service::websocket::ArcWebSocketServer,
@@ -541,12 +740,24 @@ impl InspectionManager {
         };
 
         let detection_result =
-            Self::inference(managed_station, onnx_inference, &inference_image, ws_server).await?;
+            Self::inference(managed_station.clone(), onnx_inference, &inference_image, ws_server)
+                .await?;
+
+        // Save inspection result to database
+        Self::save_inspection_result(
+            &db_conn,
+            &managed_station,
+            &camera_frame,
+            &detection_result,
+            &class_to_detection_type,
+        )
+        .await?;
 
         Ok(())
     }
 
     fn on_one_trigger(
+        db_conn: DatabaseConnection,
         camera_manager: ArcCameraManager,
         station_manager: ArcStationManager,
         station_id: Uuid,
@@ -567,6 +778,7 @@ impl InspectionManager {
             {
                 Ok(camera_frame) => {
                     if let Err(e) = Self::inference_camera_frame(
+                        db_conn,
                         managed_station,
                         camera_frame,
                         station_manager,
