@@ -251,12 +251,7 @@ pub struct RoiConfig {
 
 impl RoiConfig {
     /// Create a new ROI configuration
-    pub fn new(
-        id: Uuid,
-        name: impl Into<String>,
-        shape: RoiShape,
-        purpose: RoiPurpose,
-    ) -> Self {
+    pub fn new(id: Uuid, name: impl Into<String>, shape: RoiShape, purpose: RoiPurpose) -> Self {
         Self {
             id,
             name: name.into(),
@@ -362,6 +357,9 @@ pub struct StationConfig {
 
     /// Camera id assigned to this station
     pub camera_id: uuid::Uuid,
+
+    /// workstation
+    pub workstation: u32,
 
     /// Trigger mode for this station
     #[serde(default)]
@@ -572,6 +570,7 @@ mod tests {
             modbus: None,
             acquisition_mode: false,
             inference_type: InferenceType::Detection,
+            workstation: 1,
         };
 
         // Add ROI
@@ -625,6 +624,7 @@ mod tests {
             modbus: None,
             acquisition_mode: false,
             inference_type: InferenceType::Detection,
+            workstation: 1,
         };
 
         // get_all_rois should return empty when no rois configured

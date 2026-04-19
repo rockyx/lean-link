@@ -33,6 +33,11 @@ impl MigrationTrait for Migration {
                             .not_null(),
                     )
                     .col(
+                        ColumnDef::new(InspectionStations::Workstation)
+                            .integer()
+                            .not_null(),
+                    )
+                    .col(
                         ColumnDef::new(InspectionStations::TriggerMode)
                             .string()
                             .string_len(20)
@@ -113,6 +118,17 @@ impl MigrationTrait for Migration {
                     .name("idx_inspection_stations_enabled")
                     .table(InspectionStations::Table)
                     .col(InspectionStations::IsEnabled)
+                    .to_owned(),
+            )
+            .await?;
+
+        manager
+            .create_index(
+                Index::create()
+                    .name("idx_inspection_stations_workstation")
+                    .table(InspectionStations::Table)
+                    .col(InspectionStations::Workstation)
+                    .unique()
                     .to_owned(),
             )
             .await?;
@@ -269,6 +285,7 @@ enum InspectionStations {
     Id,
     Name,
     CameraId,
+    Workstation,
     TriggerMode,
     DetectionTypes,
     IsEnabled,

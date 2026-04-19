@@ -1,7 +1,7 @@
 use crate::database::entity::{PageResult, prelude::*, t_inspection_stations, t_station_rois};
 use sea_orm::{
-    ActiveValue, ColumnTrait, DatabaseConnection, DbErr, EntityTrait, InsertResult,
-    PaginatorTrait, QueryFilter, QueryOrder,
+    ActiveValue, ColumnTrait, DatabaseConnection, DbErr, EntityTrait, InsertResult, PaginatorTrait,
+    QueryFilter, QueryOrder,
 };
 use uuid::Uuid;
 
@@ -24,6 +24,20 @@ pub async fn find_inspection_station_by_id(
         .filter(
             t_inspection_stations::Column::Id
                 .eq(id)
+                .and(t_inspection_stations::Column::DeletedAt.is_null()),
+        )
+        .one(conn)
+        .await
+}
+
+pub async fn find_inspection_station_by_worksation(
+    conn: &DatabaseConnection,
+    workstation: u32,
+) -> Result<Option<t_inspection_stations::Model>, DbErr> {
+    TInspectionStations::find()
+        .filter(
+            t_inspection_stations::Column::Workstation
+                .eq(workstation)
                 .and(t_inspection_stations::Column::DeletedAt.is_null()),
         )
         .one(conn)
@@ -117,14 +131,14 @@ pub async fn update_inspection_station(
     station.id = ActiveValue::set(id);
     station.created_at = ActiveValue::set(existing.unwrap().created_at);
 
-    TInspectionStations::update(station).exec(conn).await.map(Some)
+    TInspectionStations::update(station)
+        .exec(conn)
+        .await
+        .map(Some)
 }
 
 /// Soft delete an inspection station by ID
-pub async fn delete_inspection_station(
-    conn: &DatabaseConnection,
-    id: Uuid,
-) -> Result<bool, DbErr> {
+pub async fn delete_inspection_station(conn: &DatabaseConnection, id: Uuid) -> Result<bool, DbErr> {
     let existing = find_inspection_station_by_id(conn, id).await?;
     if existing.is_none() {
         return Ok(false);
@@ -228,10 +242,7 @@ pub async fn update_station_roi(
 }
 
 /// Soft delete a station ROI by ID
-pub async fn delete_station_roi(
-    conn: &DatabaseConnection,
-    id: Uuid,
-) -> Result<bool, DbErr> {
+pub async fn delete_station_roi(conn: &DatabaseConnection, id: Uuid) -> Result<bool, DbErr> {
     let existing = find_station_roi_by_id(conn, id).await?;
     if existing.is_none() {
         return Ok(false);

@@ -5,6 +5,8 @@ pub use port::*;
 use serde::{Deserialize, Serialize};
 use serialport::{DataBits, FlowControl, Parity, StopBits};
 
+use crate::database::entity::t_serialport_configs;
+
 mod group;
 mod port;
 
@@ -57,6 +59,20 @@ impl Default for SerialPortConfig {
             parity: Parity::None,
             flow_control: FlowControl::None,
             timeout: Duration::from_secs(1),
+        }
+    }
+}
+
+impl From<t_serialport_configs::Model> for SerialPortConfig {
+    fn from(value: t_serialport_configs::Model) -> Self {
+        Self {
+            path: value.path.clone(),
+            baud_rate: value.baud_rate,
+            data_bits: value.data_bits_enum().unwrap_or(DataBits::Eight),
+            stop_bits: value.stop_bits_enum().unwrap_or(StopBits::One),
+            parity: value.parity_enum().unwrap_or(Parity::None),
+            flow_control: value.flow_control_enum().unwrap_or(FlowControl::None),
+            timeout: value.timeout(),
         }
     }
 }

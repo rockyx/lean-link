@@ -13,8 +13,12 @@ use tokio::sync::{Mutex, RwLock, mpsc};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-use crate::database::entity::prelude::{TDefectDetails, TInspectionDetails, TInspectionRecords, TSettings};
-use crate::database::entity::{t_defect_details, t_inspection_details, t_inspection_records, t_settings};
+use crate::database::entity::prelude::{
+    TDefectDetails, TInspectionDetails, TInspectionRecords, TSerialportConfigs, TSettings,
+};
+use crate::database::entity::{
+    t_defect_details, t_inspection_details, t_inspection_records, t_settings,
+};
 use crate::service::camera::{CameraFrame, FrameEncoding, GrabMode};
 use crate::service::inspection::config::InspectionSettings;
 use crate::service::inspection::detector::{DetectionResult, Detector, DetectorError};
@@ -22,6 +26,7 @@ use crate::service::inspection::image::InferenceImage;
 use crate::service::inspection::manager::ManagedStation;
 use crate::service::inspection::station::{DetectionType, StationConfig, TriggerMode};
 use crate::service::inspection::yolo::OnnxInference;
+use crate::service::serialport::SerialPortConfig;
 use crate::{
     errors,
     service::{camera::manager::ArcCameraManager, inspection::manager::ArcStationManager},
@@ -43,7 +48,8 @@ mod keys {
 }
 
 pub enum InspectionEvent {
-    OneTrigger(Uuid),
+    SerialOneTrigger(u32),
+    ExternalOneTrigger(u32),
     ContinueTrigger(Uuid, CameraFrame),
 }
 
@@ -105,6 +111,24 @@ impl InspectionResultPayload {
     }
 }
 
+#[async_trait::async_trait]
+pub trait SerialPortMonitor: Send + Sync {
+    async fn monitor(
+        &mut self,
+        config: SerialPortConfig,
+        sender: mpsc::Sender<InspectionEvent>,
+    ) -> mpsc::Sender<ExternalDetectionResult>;
+    fn is_running(&self) -> bool;
+    async fn stop(&self);
+    fn sender(&self) -> mpsc::Sender<ExternalDetectionResult>;
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct ExternalDetectionResult {
+    pub workstation: u32,
+    pub is_ok: bool,
+}
+
 pub struct InspectionManager {
     db_conn: DatabaseConnection,
     camera_manager: ArcCameraManager,
@@ -114,6 +138,8 @@ pub struct InspectionManager {
     inspection: RwLock<InspectionSettings>,
     class_to_detection_type: Arc<DashMap<String, DetectionType>>,
     onnx_inferences: Arc<DashMap<Uuid, Arc<Mutex<OnnxInference>>>>,
+    workstation_serial_monitor: Arc<DashMap<u32, Arc<Mutex<Box<dyn SerialPortMonitor>>>>>,
+    workstation_trigger_event: Arc<DashMap<u32, mpsc::Sender<ExternalDetectionResult>>>,
     #[cfg(feature = "web")]
     ws_server: crate::service::websocket::ArcWebSocketServer,
 }
@@ -134,6 +160,8 @@ impl InspectionManager {
             inspection: RwLock::new(InspectionSettings::default()),
             class_to_detection_type: Arc::new(DashMap::new()),
             onnx_inferences: Arc::new(DashMap::new()),
+            workstation_serial_monitor: Arc::new(DashMap::new()),
+            workstation_trigger_event: Arc::new(DashMap::new()),
             #[cfg(feature = "web")]
             ws_server,
         }
@@ -252,20 +280,53 @@ impl InspectionManager {
         Ok(())
     }
 
-    async fn start_serial(&self, station_config: &StationConfig) -> Result<(), errors::Error> {
-        let camera_id = station_config.camera_id.clone();
-        if let Some(mut station_set) = self.camera_to_stations.get_mut(&camera_id) {
-            station_set.insert(station_config.id.clone());
+    async fn start_serial(
+        &self,
+        station_config: &StationConfig,
+        sender: mpsc::Sender<InspectionEvent>,
+    ) -> Result<(), errors::Error> {
+        if let Some(serialport_config_id) = station_config.serial_port {
+            let serialport_config = TSerialportConfigs::find_by_id(serialport_config_id)
+                .one(&self.db_conn)
+                .await?;
+            if serialport_config.is_none() {
+                return Err(
+                    InspectionError::InvalidConfig(serialport_config_id.to_string()).into(),
+                );
+            }
+
+            if let Some(monitor) = self
+                .workstation_serial_monitor
+                .get(&station_config.workstation)
+            {
+                let monitor = monitor.value();
+                let mut monitor = monitor.lock().await;
+                if !monitor.is_running() {
+                    let serialport_config: SerialPortConfig = serialport_config.unwrap().into();
+                    let sender = monitor.monitor(serialport_config, sender).await;
+                    self.workstation_trigger_event
+                        .insert(station_config.workstation, sender);
+                } else {
+                    self.workstation_trigger_event
+                        .insert(station_config.workstation, monitor.sender());
+                }
+            }
+            let camera_id = station_config.camera_id.clone();
+            if let Some(mut station_set) = self.camera_to_stations.get_mut(&camera_id) {
+                station_set.insert(station_config.id.clone());
+            } else {
+                let mut station_set = HashSet::new();
+                station_set.insert(station_config.id.clone());
+                self.camera_to_stations.insert(camera_id, station_set);
+                self.camera_manager
+                    .open_camera(&station_config.camera_id)
+                    .await?;
+                self.camera_manager
+                    .start_grabbing(&station_config.camera_id, GrabMode::SingleFrame)
+                    .await?;
+            }
         } else {
-            let mut station_set = HashSet::new();
-            station_set.insert(station_config.id.clone());
-            self.camera_to_stations.insert(camera_id, station_set);
-            self.camera_manager
-                .open_camera(&station_config.camera_id)
-                .await?;
-            self.camera_manager
-                .start_grabbing(&station_config.camera_id, GrabMode::SingleFrame)
-                .await?;
+            return Err(InspectionError::InvalidConfig("先配置串口".into()).into());
         }
 
         self.initializ_onnx(&station_config).await?;
@@ -295,7 +356,7 @@ impl InspectionManager {
                     self.start_external(&station.config).await?;
                 }
                 TriggerMode::Serial => {
-                    self.start_serial(&station.config).await?;
+                    self.start_serial(&station.config, tx.clone()).await?;
                 }
                 _ => {}
             }
@@ -308,6 +369,7 @@ impl InspectionManager {
         let onnx_inferences = self.onnx_inferences.clone();
         let ws_server = self.ws_server.clone();
         let db_conn = self.db_conn.clone();
+        let workstation_trigger_event = self.workstation_trigger_event.clone();
         tokio::spawn(async move {
             loop {
                 let station_manager = station_manager.clone();
@@ -316,6 +378,7 @@ impl InspectionManager {
                 let onnx_inferences = onnx_inferences.clone();
                 let ws_server = ws_server.clone();
                 let db_conn = db_conn.clone();
+                let workstation_trigger_event = workstation_trigger_event.clone();
                 select! {
                     _ = cloned_token.cancelled() => {
                         if let Err(e) = camera_manager.close_all().await {
@@ -330,17 +393,35 @@ impl InspectionManager {
                             Some(e) => {
                                 match e {
                                     // 手动触发
-                                    InspectionEvent::OneTrigger(station_id) => {
-                                        Self::on_one_trigger(
-                                            db_conn,
-                                            camera_manager,
-                                            station_manager,
-                                            station_id,
-                                            class_to_detection_type,
-                                            onnx_inferences,
-                                            #[cfg(feature = "web")]
-                                            ws_server,
-                                        );
+                                    InspectionEvent::SerialOneTrigger(workstation) => {
+                                        if let Some(station_id) = station_manager.get_stations_id_by_workstation(&workstation) {
+                                            Self::on_one_trigger(
+                                                db_conn,
+                                                camera_manager,
+                                                station_manager,
+                                                station_id,
+                                                class_to_detection_type,
+                                                onnx_inferences,
+                                                workstation_trigger_event,
+                                                #[cfg(feature = "web")]
+                                                ws_server,
+                                            );
+                                        }
+                                    },
+                                    InspectionEvent::ExternalOneTrigger(workstation) => {
+                                        if let Some(station_id) = station_manager.get_stations_id_by_workstation(&workstation) {
+                                            Self::on_one_trigger(
+                                                db_conn,
+                                                camera_manager,
+                                                station_manager,
+                                                station_id,
+                                                class_to_detection_type,
+                                                onnx_inferences,
+                                                workstation_trigger_event,
+                                                #[cfg(feature = "web")]
+                                                ws_server,
+                                            );
+                                        }
                                     },
                                     // 相机持续触发
                                     InspectionEvent::ContinueTrigger(station_id, camera_frame) => {
@@ -355,6 +436,7 @@ impl InspectionManager {
                                                     station_id,
                                                     class_to_detection_type,
                                                     onnx_inferences,
+                                                    workstation_trigger_event,
                                                     #[cfg(feature = "web")]
                                                     ws_server,
                                                 )
@@ -380,6 +462,10 @@ impl InspectionManager {
     pub async fn stop(&self) -> Result<(), errors::Error> {
         let loop_token = self.loop_token.lock().await;
         loop_token.cancel();
+        for monitor in self.workstation_serial_monitor.iter() {
+            monitor.value().lock().await.stop().await;
+        }
+        self.workstation_trigger_event.clear();
         Ok(())
     }
 
@@ -486,19 +572,21 @@ impl InspectionManager {
         let record_id = Uuid::now_v7();
         let now = chrono::Utc::now();
 
-        let overall_result = if detection_result.is_ok {
-            "OK"
-        } else {
-            "NG"
-        };
+        let overall_result = if detection_result.is_ok { "OK" } else { "NG" };
 
         let avg_confidence = if detection_result.detections.is_empty() {
             None
         } else {
-            let sum: f32 = detection_result.detections.iter().map(|d| d.confidence).sum();
+            let sum: f32 = detection_result
+                .detections
+                .iter()
+                .map(|d| d.confidence)
+                .sum();
             Some(
-                sea_orm::prelude::Decimal::from_f32_retain(sum / detection_result.detections.len() as f32)
-                    .unwrap_or_default(),
+                sea_orm::prelude::Decimal::from_f32_retain(
+                    sum / detection_result.detections.len() as f32,
+                )
+                .unwrap_or_default(),
             )
         };
 
@@ -620,12 +708,12 @@ impl InspectionManager {
                         "height": bbox.height,
                     });
 
-                    let position_x = sea_orm::prelude::Decimal::from_f32_retain(bbox.x)
-                        .unwrap_or_default();
-                    let position_y = sea_orm::prelude::Decimal::from_f32_retain(bbox.y)
-                        .unwrap_or_default();
-                    let area = sea_orm::prelude::Decimal::from_f32_retain(bbox.area())
-                        .unwrap_or_default();
+                    let position_x =
+                        sea_orm::prelude::Decimal::from_f32_retain(bbox.x).unwrap_or_default();
+                    let position_y =
+                        sea_orm::prelude::Decimal::from_f32_retain(bbox.y).unwrap_or_default();
+                    let area =
+                        sea_orm::prelude::Decimal::from_f32_retain(bbox.area()).unwrap_or_default();
                     let defect_confidence =
                         sea_orm::prelude::Decimal::from_f32_retain(detection.confidence)
                             .unwrap_or_default();
@@ -660,9 +748,7 @@ impl InspectionManager {
                         repair_suggestion: ActiveValue::set(None),
                         ..Default::default()
                     };
-                    TDefectDetails::insert(defect_model)
-                        .exec(db_conn)
-                        .await?;
+                    TDefectDetails::insert(defect_model).exec(db_conn).await?;
                 }
             }
         }
@@ -749,6 +835,7 @@ impl InspectionManager {
         _station_id: Uuid,
         class_to_detection_type: Arc<DashMap<String, DetectionType>>,
         onnx_inferences: Arc<DashMap<Uuid, Arc<Mutex<OnnxInference>>>>,
+        workstation_trigger_event: Arc<DashMap<u32, mpsc::Sender<ExternalDetectionResult>>>,
         #[cfg(feature = "web")] ws_server: crate::service::websocket::ArcWebSocketServer,
     ) -> Result<(), errors::Error> {
         let inference_image = InferenceImage::from_camera_frame(&camera_frame)?;
@@ -758,9 +845,23 @@ impl InspectionManager {
             None => None,
         };
 
-        let detection_result =
-            Self::inference(managed_station.clone(), onnx_inference, &inference_image, ws_server)
-                .await?;
+        let detection_result = Self::inference(
+            managed_station.clone(),
+            onnx_inference,
+            &inference_image,
+            ws_server,
+        )
+        .await?;
+
+        if let Some(sender) = workstation_trigger_event.get(&managed_station.config.workstation) {
+            let _ = sender
+                .value()
+                .send(ExternalDetectionResult {
+                    workstation: managed_station.config.workstation,
+                    is_ok: detection_result.is_ok,
+                })
+                .await;
+        }
 
         // Save inspection result to database
         Self::save_inspection_result(
@@ -782,6 +883,7 @@ impl InspectionManager {
         station_id: Uuid,
         class_to_detection_type: Arc<DashMap<String, DetectionType>>,
         onnx_inferences: Arc<DashMap<Uuid, Arc<Mutex<OnnxInference>>>>,
+        workstation_trigger_event: Arc<DashMap<u32, mpsc::Sender<ExternalDetectionResult>>>,
         #[cfg(feature = "web")] ws_server: crate::service::websocket::ArcWebSocketServer,
     ) {
         let managed_station = station_manager.get_station(station_id);
@@ -804,6 +906,8 @@ impl InspectionManager {
                         station_id,
                         class_to_detection_type,
                         onnx_inferences,
+                        workstation_trigger_event,
+                        #[cfg(feature = "web")]
                         ws_server,
                     )
                     .await
@@ -956,6 +1060,14 @@ impl InspectionManager {
             .map(|item| item.value().clone())
             .collect()
     }
+
+    pub fn register_workstation_monitor(
+        &self,
+        workstation: u32,
+        monitor: Arc<Mutex<Box<dyn SerialPortMonitor>>>,
+    ) {
+        self.workstation_serial_monitor.insert(workstation, monitor);
+    }
 }
 
 pub type ArcInspectionManager = Arc<InspectionManager>;
@@ -963,6 +1075,7 @@ pub type ArcInspectionManager = Arc<InspectionManager>;
 #[derive(Debug, Clone)]
 pub enum InspectionError {
     DuplicatedContinueCamera(String),
+    InvalidConfig(String),
 }
 
 impl std::fmt::Display for InspectionError {
@@ -970,6 +1083,9 @@ impl std::fmt::Display for InspectionError {
         match self {
             InspectionError::DuplicatedContinueCamera(msg) => {
                 write!(f, "相机持续触发不能同时应用在多个工作站: {}", msg)
+            }
+            InspectionError::InvalidConfig(msg) => {
+                write!(f, "无效串口配置：{}", msg)
             }
         }
     }

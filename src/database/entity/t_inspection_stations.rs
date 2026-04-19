@@ -201,6 +201,9 @@ pub struct Model {
     /// Camera ID (foreign key to t_camera_configs)
     pub camera_id: Uuid,
 
+    /// workstation number
+    pub workstation: u32,
+
     /// Trigger mode
     #[sea_orm(default_value = "Continuous")]
     pub trigger_mode: TriggerMode,

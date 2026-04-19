@@ -32,6 +32,7 @@ pub struct ManagedStation {
 pub struct StationManager {
     db_conn: DatabaseConnection,
     stations: DashMap<Uuid, ManagedStation>,
+    workstations: DashMap<u32, Uuid>,
     enabled_stations: Arc<RwLock<Vec<Uuid>>>,
 }
 
@@ -41,6 +42,7 @@ impl StationManager {
             db_conn,
             stations: DashMap::new(),
             enabled_stations: Arc::new(RwLock::new(Vec::new())),
+            workstations: DashMap::new(),
         }
     }
 
@@ -74,6 +76,7 @@ impl StationManager {
 
             self.stations
                 .insert(station.id, ManagedStation { config, rois });
+            self.workstations.insert(station.workstation, station.id);
         }
 
         // Update enabled stations list
@@ -103,6 +106,7 @@ impl StationManager {
             modbus: station.modbus.clone(),
             acquisition_mode: station.acquisition_mode,
             inference_type: station.inference_type,
+            workstation: station.workstation,
         }
     }
 
@@ -164,6 +168,8 @@ impl StationManager {
             serial_port: sea_orm::Set(request.serial_port.clone()),
             modbus: sea_orm::Set(request.modbus.clone()),
             acquisition_mode: sea_orm::Set(request.acquisition_mode),
+            workstation: sea_orm::Set(request.workstation),
+            inference_type: sea_orm::Set(request.inference_type),
             ..Default::default()
         };
 
@@ -184,8 +190,9 @@ impl StationManager {
             modbus: request.modbus,
             acquisition_mode: request.acquisition_mode,
             inference_type: request.inference_type,
+            workstation: request.workstation,
         };
-
+        self.workstations.insert(config.workstation, id);
         self.stations.insert(
             id,
             ManagedStation {
@@ -193,7 +200,6 @@ impl StationManager {
                 rois: vec![],
             },
         );
-
         if is_enabled {
             let mut enabled = self.enabled_stations.write().await;
             if !enabled.contains(&id) {
@@ -239,6 +245,11 @@ impl StationManager {
             serde_json::from_value(existing.detection_types.clone()).unwrap_or_default()
         });
         let detection_types_json = serde_json::to_value(&detection_types)?;
+        let workstation = request.workstation.clone().unwrap_or(existing.workstation);
+        let inference_type = request
+            .inference_type
+            .clone()
+            .unwrap_or(existing.inference_type);
 
         let active_model = t_inspection_stations::ActiveModel {
             id: sea_orm::Set(id),
@@ -252,6 +263,8 @@ impl StationManager {
             serial_port: sea_orm::Set(serial_port.clone()),
             modbus: sea_orm::Set(modbus.clone()),
             acquisition_mode: sea_orm::Set(acquisition_mode),
+            workstation: sea_orm::Set(workstation),
+            inference_type: sea_orm::Set(inference_type),
             ..Default::default()
         };
 
@@ -270,6 +283,9 @@ impl StationManager {
             managed.config.serial_port = serial_port;
             managed.config.modbus = modbus;
             managed.config.acquisition_mode = acquisition_mode;
+            managed.config.inference_type = inference_type;
+            managed.config.workstation = workstation;
+            self.workstations.insert(workstation, managed.config.id);
 
             // Update enabled list
             let mut enabled = self.enabled_stations.write().await;
@@ -292,7 +308,10 @@ impl StationManager {
 
         if deleted {
             // Remove from memory
-            self.stations.remove(&id);
+            if let Some(managed_station) = self.stations.remove(&id) {
+                self.workstations
+                    .remove(&managed_station.1.config.workstation);
+            }
 
             // Remove from enabled list
             let mut enabled = self.enabled_stations.write().await;
@@ -446,6 +465,14 @@ impl StationManager {
     pub fn get_station_rois(&self, station_id: Uuid) -> Option<Vec<RoiConfig>> {
         self.stations.get(&station_id).map(|s| s.rois.clone())
     }
+
+    pub fn get_stations_id_by_workstation(&self, workstation: &u32) -> Option<Uuid> {
+        if let Some(id) = self.workstations.get(workstation) {
+            return Some(id.value().clone());
+        }
+
+        None
+    }
 }
 
 pub type ArcStationManager = Arc<StationManager>;
@@ -459,6 +486,7 @@ pub type ArcStationManager = Arc<StationManager>;
 pub struct StationCreateRequest {
     pub name: String,
     pub camera_id: Uuid,
+    pub workstation: u32,
     pub trigger_mode: Option<TriggerMode>,
     pub detection_types: Vec<String>,
     pub is_enabled: Option<bool>,
@@ -475,6 +503,7 @@ pub struct StationCreateRequest {
 pub struct StationUpdateRequest {
     pub name: Option<String>,
     pub camera_id: Option<Uuid>,
+    pub workstation: Option<u32>,
     pub trigger_mode: Option<TriggerMode>,
     pub detection_types: Option<Vec<String>>,
     pub is_enabled: Option<bool>,
@@ -483,7 +512,7 @@ pub struct StationUpdateRequest {
     pub serial_port: Option<Uuid>,
     pub modbus: Option<Uuid>,
     pub acquisition_mode: Option<bool>,
-    pub inference_type: InferenceType,
+    pub inference_type: Option<InferenceType>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -510,6 +539,7 @@ pub struct StationResponse {
     pub id: Uuid,
     pub name: String,
     pub camera_id: Uuid,
+    pub workstation: u32,
     pub trigger_mode: TriggerMode,
     pub detection_types: Vec<String>,
     pub is_enabled: bool,
@@ -528,6 +558,7 @@ impl From<ManagedStation> for StationResponse {
             id: managed.config.id,
             name: managed.config.name,
             camera_id: managed.config.camera_id,
+            workstation: managed.config.workstation,
             trigger_mode: managed.config.trigger_mode,
             detection_types: managed.config.detection_types,
             is_enabled: managed.config.is_enabled,

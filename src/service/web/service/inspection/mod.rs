@@ -69,7 +69,7 @@ pub mod api {
         Ok(WebResponse::with_result(()).into())
     }
 
-    #[get("enumerate_detection_types")]
+    #[get("/enumerate_detection_types")]
     pub async fn enumerate_detection_types(
         app_state: web::Data<AppState>,
     ) -> actix_web::Result<web::Json<WebResponse<Vec<DetectionType>>>, errors::Error> {
