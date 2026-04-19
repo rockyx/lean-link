@@ -17,7 +17,10 @@ pub mod api {
 
     use crate::{
         AppState, errors,
-        service::{inspection::config::InspectionSettings, web::service::WebResponse},
+        service::{
+            inspection::{config::InspectionSettings, station::DetectionType},
+            web::service::WebResponse,
+        },
     };
 
     use super::TestStationRequest;
@@ -64,5 +67,13 @@ pub mod api {
             .await?;
 
         Ok(WebResponse::with_result(()).into())
+    }
+
+    #[get("enumerate_detection_types")]
+    pub async fn enumerate_detection_types(
+        app_state: web::Data<AppState>,
+    ) -> actix_web::Result<web::Json<WebResponse<Vec<DetectionType>>>, errors::Error> {
+        let result = app_state.inspection_manager.enumerate_detection_types();
+        Ok(WebResponse::with_result(result).into())
     }
 }

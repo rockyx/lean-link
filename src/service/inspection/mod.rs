@@ -3,8 +3,8 @@ use std::io::Cursor;
 use std::path::Path;
 use std::sync::Arc;
 
-use dashmap::DashMap;
 use ::image::{DynamicImage, ImageFormat, Rgb, RgbImage};
+use dashmap::DashMap;
 use sea_orm::{ActiveValue, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
 use serde::{Deserialize, Serialize};
 use tokio::select;
@@ -17,10 +17,10 @@ use crate::database::entity::prelude::TSettings;
 use crate::database::entity::t_settings;
 use crate::service::camera::{CameraFrame, FrameEncoding, GrabMode};
 use crate::service::inspection::config::InspectionSettings;
-use crate::service::inspection::detector::{Detector, DetectorError, DetectionResult};
+use crate::service::inspection::detector::{DetectionResult, Detector, DetectorError};
 use crate::service::inspection::image::InferenceImage;
 use crate::service::inspection::manager::ManagedStation;
-use crate::service::inspection::station::{StationConfig, TriggerMode};
+use crate::service::inspection::station::{DetectionType, StationConfig, TriggerMode};
 use crate::service::inspection::yolo::OnnxInference;
 use crate::{
     errors,
@@ -77,7 +77,7 @@ impl InspectionResultPayload {
     /// Uses the unified LLWS binary protocol
     pub fn to_binary(&self) -> Vec<u8> {
         use crate::service::websocket::protocol::{
-            build_binary_payload, WsBinaryHeader, MSG_TYPE_INSPECTION_RESULT, PROTOCOL_VERSION,
+            MSG_TYPE_INSPECTION_RESULT, PROTOCOL_VERSION, WsBinaryHeader, build_binary_payload,
         };
 
         let header = &self.header;
@@ -112,7 +112,7 @@ pub struct InspectionManager {
     loop_token: Mutex<CancellationToken>,
     camera_to_stations: Arc<DashMap<Uuid, HashSet<Uuid>>>,
     inspection: RwLock<InspectionSettings>,
-    class_to_detection_type: Arc<DashMap<String, String>>,
+    class_to_detection_type: Arc<DashMap<String, DetectionType>>,
     onnx_inferences: Arc<DashMap<Uuid, Arc<Mutex<OnnxInference>>>>,
     #[cfg(feature = "web")]
     ws_server: crate::service::websocket::ArcWebSocketServer,
@@ -171,18 +171,16 @@ impl InspectionManager {
             // Use spawn_blocking to avoid blocking the async runtime
             // ONNX model loading is a heavy blocking operation
             let onnx_inference = tokio::task::spawn_blocking(move || {
-                let mut onnx_inference = OnnxInference::new(model_path, name)
-                    .with_inference_type(inference_type);
+                let mut onnx_inference =
+                    OnnxInference::new(model_path, name).with_inference_type(inference_type);
                 onnx_inference.initialize()?;
                 Ok::<_, DetectorError>(onnx_inference)
             })
             .await
             .map_err(|e| DetectorError::Internal(format!("spawn_blocking error: {}", e)))??;
 
-            self.onnx_inferences.insert(
-                station_id,
-                Arc::new(Mutex::new(onnx_inference)),
-            );
+            self.onnx_inferences
+                .insert(station_id, Arc::new(Mutex::new(onnx_inference)));
         }
         Ok(())
     }
@@ -307,11 +305,15 @@ impl InspectionManager {
         let camera_manager = self.camera_manager.clone();
         let camera_to_stations = self.camera_to_stations.clone();
         let class_to_detection_type = self.class_to_detection_type.clone();
+        let onnx_inferences = self.onnx_inferences.clone();
+        let ws_server = self.ws_server.clone();
         tokio::spawn(async move {
             loop {
                 let station_manager = station_manager.clone();
                 let camera_manager = camera_manager.clone();
                 let class_to_detection_type = class_to_detection_type.clone();
+                let onnx_inferences = onnx_inferences.clone();
+                let ws_server = ws_server.clone();
                 select! {
                     _ = cloned_token.cancelled() => {
                         if let Err(e) = camera_manager.close_all().await {
@@ -327,10 +329,18 @@ impl InspectionManager {
                                 match e {
                                     // 手动触发
                                     InspectionEvent::OneTrigger(station_id) => {
-                                        Self::on_one_trigger(camera_manager, station_manager, station_id, class_to_detection_type);
+                                        Self::on_one_trigger(
+                                            camera_manager,
+                                            station_manager,
+                                            station_id,
+                                            class_to_detection_type,
+                                            onnx_inferences,
+                                            #[cfg(feature = "web")]
+                                            ws_server,
+                                        );
                                     },
                                     // 相机持续触发
-                                    InspectionEvent::ContinueTrigger(station_id, camera_frame) => {
+                                    InspectionEvent::ContinueTrigger(_station_id, _camera_frame) => {
                                         tokio::spawn(async move {});
                                     },
                                 }
@@ -427,15 +437,18 @@ impl InspectionManager {
     pub async fn register_class_to_detection_type<S: Into<String>>(
         &self,
         class: S,
-        detection_type: S,
+        detection_type: DetectionType,
     ) {
-        self.class_to_detection_type
-            .insert(class.into(), detection_type.into());
+        let mut class = class.into();
+        if class.is_empty() {
+            class = detection_type.id.clone();
+        }
+        self.class_to_detection_type.insert(class, detection_type);
     }
 
     /// Remove ONNX inference instance for a station
     fn remove_onnx(&self, station_id: &Uuid) {
-        if let Some((_, onnx)) = self.onnx_inferences.remove(station_id) {
+        if let Some((_, _onnx)) = self.onnx_inferences.remove(station_id) {
             tracing::info!("Removed ONNX inference for station {}", station_id);
         }
     }
@@ -470,7 +483,10 @@ impl InspectionManager {
             .get_station(id)
             .and_then(|s| s.config.model_path.clone());
 
-        let updated = self.station_manager.update_station(id, request.clone()).await?;
+        let updated = self
+            .station_manager
+            .update_station(id, request.clone())
+            .await?;
 
         if updated {
             let new_station = self.station_manager.get_station(id);
@@ -508,11 +524,35 @@ impl InspectionManager {
         Ok(deleted)
     }
 
+    async fn inference_camera_frame(
+        managed_station: ManagedStation,
+        camera_frame: CameraFrame,
+        station_manager: ArcStationManager,
+        station_id: Uuid,
+        class_to_detection_type: Arc<DashMap<String, DetectionType>>,
+        onnx_inferences: Arc<DashMap<Uuid, Arc<Mutex<OnnxInference>>>>,
+        #[cfg(feature = "web")] ws_server: crate::service::websocket::ArcWebSocketServer,
+    ) -> Result<(), errors::Error> {
+        let inference_image = InferenceImage::from_camera_frame(&camera_frame)?;
+
+        let onnx_inference = match onnx_inferences.get(&managed_station.config.id) {
+            Some(oi) => Some(oi.value().clone()),
+            None => None,
+        };
+
+        let detection_result =
+            Self::inference(managed_station, onnx_inference, &inference_image, ws_server).await?;
+
+        Ok(())
+    }
+
     fn on_one_trigger(
         camera_manager: ArcCameraManager,
         station_manager: ArcStationManager,
         station_id: Uuid,
-        class_to_detection_type: Arc<DashMap<String, String>>,
+        class_to_detection_type: Arc<DashMap<String, DetectionType>>,
+        onnx_inferences: Arc<DashMap<Uuid, Arc<Mutex<OnnxInference>>>>,
+        #[cfg(feature = "web")] ws_server: crate::service::websocket::ArcWebSocketServer,
     ) {
         let managed_station = station_manager.get_station(station_id);
         if managed_station.is_none() {
@@ -525,8 +565,24 @@ impl InspectionManager {
                 .trigger_frame(&managed_station.config.camera_id)
                 .await
             {
-                Ok(_) => {}
-                Err(_) => {}
+                Ok(camera_frame) => {
+                    if let Err(e) = Self::inference_camera_frame(
+                        managed_station,
+                        camera_frame,
+                        station_manager,
+                        station_id,
+                        class_to_detection_type,
+                        onnx_inferences,
+                        ws_server,
+                    )
+                    .await
+                    {
+                        tracing::error!("detection camera frame error: {:?}", e);
+                    }
+                }
+                Err(e) => {
+                    tracing::error!("triger frame error: {:?}", e);
+                }
             }
         });
     }
@@ -534,51 +590,18 @@ impl InspectionManager {
     async fn inference(
         managed_station: ManagedStation,
         onnx_inference: Option<Arc<Mutex<OnnxInference>>>,
-    ) -> Result<(), errors::Error> {
-        if let Some(onnx_inference) = onnx_inference {
-            let mut onnx_inference = onnx_inference.lock().await;
-        }
-        Ok(())
-    }
-
-    pub async fn test_station(
-        &self,
-        station_id: &Uuid,
-        image_path: &str,
-    ) -> Result<(), errors::Error> {
-        let managed_station = self
-            .station_manager
-            .get_station(*station_id)
-            .ok_or_else(|| {
-                errors::Error::from(DetectorError::InvalidInput("工作站不存在".to_string()))
-            })?;
-
-        self.initializ_onnx(&managed_station.config).await?;
-
-        let image_path = Path::new(image_path);
-        if !image_path.exists() {
-            return Err(
-                DetectorError::InvalidInput(format!("图像不存在: {:?}", image_path)).into(),
-            );
-        }
-
-        let inference_image = InferenceImage::from_file(image_path)?;
-
+        inference_image: &InferenceImage,
+        #[cfg(feature = "web")] ws_server: crate::service::websocket::ArcWebSocketServer,
+    ) -> Result<DetectionResult, errors::Error> {
         // Run ONNX detection
         let detection_result = {
-            let onnx_inference = self
-                .onnx_inferences
-                .get(&managed_station.config.id)
-                .ok_or_else(|| {
-                    DetectorError::NotInitialized
-                })?;
-            let mut onnx = onnx_inference.value().lock().await;
+            let onnx_inference = onnx_inference.ok_or_else(|| DetectorError::NotInitialized)?;
+            let mut onnx = onnx_inference.lock().await;
             onnx.detect(&inference_image)?
         };
 
         // Draw detection results on the image
-        let annotated_image =
-            Self::draw_detections(&inference_image, &detection_result);
+        let annotated_image = Self::draw_detections(&inference_image, &detection_result);
 
         // Encode to JPEG
         let mut jpeg_bytes = Vec::new();
@@ -611,11 +634,49 @@ impl InspectionManager {
             };
 
             let binary_data = payload.to_binary();
-            let _ = self
-                .ws_server
+            let _ = ws_server
                 .broadcast(Message::Binary(binary_data.into()))
                 .await;
         }
+        Ok(detection_result)
+    }
+
+    pub async fn test_station(
+        &self,
+        station_id: &Uuid,
+        image_path: &str,
+    ) -> Result<(), errors::Error> {
+        let managed_station = self
+            .station_manager
+            .get_station(*station_id)
+            .ok_or_else(|| {
+                errors::Error::from(DetectorError::InvalidInput("工作站不存在".to_string()))
+            })?;
+
+        self.initializ_onnx(&managed_station.config).await?;
+
+        let image_path = Path::new(image_path);
+        if !image_path.exists() {
+            return Err(
+                DetectorError::InvalidInput(format!("图像不存在: {:?}", image_path)).into(),
+            );
+        }
+
+        let inference_image = InferenceImage::from_file(image_path)?;
+        let onnx_inference = match self.onnx_inferences.get(&managed_station.config.id) {
+            Some(oi) => Some(oi.value().clone()),
+            None => None,
+        };
+
+        // Run ONNX detection
+        Self::inference(
+            managed_station,
+            onnx_inference,
+            &inference_image,
+            #[cfg(feature = "web")]
+            self.ws_server.clone(),
+        )
+        .await?;
 
         Ok(())
     }
@@ -650,12 +711,19 @@ impl InspectionManager {
                     / 400.0)
                     .max(1.0)
                     .min(3.0)) as i32;
-                
+
                 draw_rect(&mut img, x1, y1, x2, y2, color, line_thickness);
             }
         }
 
         DynamicImage::ImageRgb8(img)
+    }
+
+    pub fn enumerate_detection_types(&self) -> Vec<DetectionType> {
+        self.class_to_detection_type
+            .iter()
+            .map(|item| item.value().clone())
+            .collect()
     }
 }
 
@@ -679,7 +747,15 @@ impl std::fmt::Display for InspectionError {
 impl std::error::Error for InspectionError {}
 
 /// Draw a rectangle outline on the image with specified line thickness
-fn draw_rect(img: &mut RgbImage, x1: i32, y1: i32, x2: i32, y2: i32, color: Rgb<u8>, thickness: i32) {
+fn draw_rect(
+    img: &mut RgbImage,
+    x1: i32,
+    y1: i32,
+    x2: i32,
+    y2: i32,
+    color: Rgb<u8>,
+    thickness: i32,
+) {
     let width = img.width() as i32;
     let height = img.height() as i32;
 
@@ -687,7 +763,7 @@ fn draw_rect(img: &mut RgbImage, x1: i32, y1: i32, x2: i32, y2: i32, color: Rgb<
     for t in 0..thickness {
         let y_top = y1 + t;
         let y_bottom = y2 - t;
-        
+
         // Top line
         if y_top >= 0 && y_top < height {
             for x in x1.max(0)..=x2.min(width - 1) {
@@ -706,7 +782,7 @@ fn draw_rect(img: &mut RgbImage, x1: i32, y1: i32, x2: i32, y2: i32, color: Rgb<
     for t in 0..thickness {
         let x_left = x1 + t;
         let x_right = x2 - t;
-        
+
         // Left line
         if x_left >= 0 && x_left < width {
             for y in (y1 + thickness).max(0)..=(y2 - thickness).min(height - 1) {
