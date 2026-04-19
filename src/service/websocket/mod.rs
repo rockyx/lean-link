@@ -1,3 +1,5 @@
+pub mod protocol;
+
 use std::{sync::Arc, time::Duration};
 
 use crate::config::Sys;
@@ -355,3 +357,9 @@ async fn handle_connection(
 }
 
 pub type ArcWebSocketServer = Arc<WebSocketServer>;
+
+// Re-export protocol items for convenience
+pub use protocol::{
+    build_binary_payload, parse_binary_message, PROTOCOL_VERSION, WsBinaryHeader,
+    WS_BINARY_MAGIC, MSG_TYPE_CAMERA_FRAME, MSG_TYPE_INSPECTION_RESULT,
+};

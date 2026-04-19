@@ -82,7 +82,7 @@ pub mod test {
                 let dim1 = dims[1];
                 let dim2 = dims[2];
                 println!("Shape: [{}, {}, {}]", batch, dim1, dim2);
-                
+
                 // Standard YOLO format: [1, 4+num_classes, num_detections]
                 // dim1 should be small (like 8 for 4 classes), dim2 should be large (like 8400)
                 if dim1 < dim2 {
@@ -227,48 +227,58 @@ pub mod test {
         }
     }
 
-    #[test]
-    fn test_onnx_detection_single_image() {
-        if !Path::new(MODEL11_PATH).exists() {
-            eprintln!("Skipping test: Model not found at {}", MODEL11_PATH);
-            return;
-        }
+    async fn test_onnx_detection_single_image_inner() {
+        let _ = tokio::task::spawn_blocking(move || {
+            if !Path::new(MODEL26_PATH).exists() {
+                eprintln!("Skipping test: Model not found at {}", MODEL26_PATH);
+                return;
+            }
 
-        let images = get_test_images();
-        if images.is_empty() {
-            eprintln!("Skipping test: No test images found in {}", TEST_IMAGES_DIR);
-            return;
-        }
+            let images = get_test_images();
+            if images.is_empty() {
+                eprintln!("Skipping test: No test images found in {}", TEST_IMAGES_DIR);
+                return;
+            }
 
-        // Use first image for testing
-        let test_image = &images[0];
-        println!("Testing with image: {:?}", test_image);
+            // Use first image for testing
+            let test_image = &images[0];
+            println!("Testing with image: {:?}", test_image);
 
-        // Initialize model
-        let mut inference = OnnxInference::new(MODEL11_PATH, "test_detection");
-        inference.initialize().expect("Failed to initialize model");
+            // Initialize model
+            let mut inference = OnnxInference::new(MODEL26_PATH, "test_detection");
+            inference.initialize().expect("Failed to initialize model");
 
-        // Load image
-        let image = InferenceImage::from_file(test_image).expect("Failed to load image");
-        println!(
-            "Image size: {}x{}, channels: {}",
-            image.width, image.height, image.channels
-        );
-
-        // Run detection
-        let result = inference.detect(&image).expect("Detection failed");
-
-        println!("Detection result:");
-        println!("  - Total detections: {}", result.detections.len());
-        println!("  - Is OK: {}", result.is_ok);
-        println!("  - Processing time: {}ms", result.processing_time_ms);
-
-        for (i, det) in result.detections.iter().enumerate() {
+            // Load image
+            let image = InferenceImage::from_file(test_image).expect("Failed to load image");
             println!(
-                "  [{}] {} (class {}): confidence {:.3}, bbox: {:?}",
-                i, det.class_name, det.class_id, det.confidence, det.bbox
+                "Image size: {}x{}, channels: {}",
+                image.width, image.height, image.channels
             );
-        }
+
+            // Run detection
+            let result = inference.detect(&image).expect("Detection failed");
+
+            println!("Detection result:");
+            println!("  - Total detections: {}", result.detections.len());
+            println!("  - Is OK: {}", result.is_ok);
+            println!("  - Processing time: {}ms", result.processing_time_ms);
+
+            for (i, det) in result.detections.iter().enumerate() {
+                println!(
+                    "  [{}] {} (class {}): confidence {:.3}, bbox: {:?}",
+                    i, det.class_name, det.class_id, det.confidence, det.bbox
+                );
+            }
+        }).await;
+    }
+
+    #[actix_web::test(flavor = "multi_thread")]
+    async fn test_onnx_detection_single_image() {
+        tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::DEBUG)
+            .init();
+
+        test_onnx_detection_single_image_inner().await;
     }
 
     #[test]
@@ -331,7 +341,11 @@ pub mod test {
     }
 
     /// Benchmark inference time comparison between YOLO11 and YOLO26
-    fn benchmark_model(model_path: &str, model_name: &str, images: &[std::path::PathBuf]) -> (u64, usize) {
+    fn benchmark_model(
+        model_path: &str,
+        model_name: &str,
+        images: &[std::path::PathBuf],
+    ) -> (u64, usize) {
         if !Path::new(model_path).exists() {
             println!("{} model not found, skipping", model_name);
             return (0, 0);
@@ -347,7 +361,8 @@ pub mod test {
 
         // Warmup: first run to initialize cache
         if !images.is_empty() {
-            let warmup_image = InferenceImage::from_file(&images[0]).expect("Failed to load warmup image");
+            let warmup_image =
+                InferenceImage::from_file(&images[0]).expect("Failed to load warmup image");
             let _ = inference.detect(&warmup_image);
             println!("Warmup completed");
         }
@@ -416,8 +431,15 @@ pub mod test {
             println!("|---------------|-------------|-------------|");
             println!("| Total time    | {}ms      | {}ms      |", time11, time26);
             println!("| Average time  | {:.2}ms    | {:.2}ms    |", avg11, avg26);
-            println!("| Detections    | {}          | {}          |", det11, det26);
-            println!("| Images        | {}          | {}          |", images.len(), images.len());
+            println!(
+                "| Detections    | {}          | {}          |",
+                det11, det26
+            );
+            println!(
+                "| Images        | {}          | {}          |",
+                images.len(),
+                images.len()
+            );
             println!();
 
             let speedup = if avg26 < avg11 {
@@ -445,7 +467,10 @@ pub mod test {
             // Estimate NMS overhead
             let nms_overhead_estimate = avg11 - avg26;
             if nms_overhead_estimate > 0.0 {
-                println!("Estimated NMS overhead in YOLO11: {:.2}ms per image", nms_overhead_estimate);
+                println!(
+                    "Estimated NMS overhead in YOLO11: {:.2}ms per image",
+                    nms_overhead_estimate
+                );
             }
         } else {
             println!("Could not complete benchmark (models not found)");

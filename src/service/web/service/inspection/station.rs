@@ -51,7 +51,7 @@ pub mod api {
         app_state: web::Data<AppState>,
     ) -> actix_web::Result<web::Json<WebResponse<()>>, errors::Error> {
         app_state
-            .station_manager
+            .inspection_manager
             .initialize_from_database()
             .await?;
 
@@ -97,7 +97,7 @@ pub mod api {
         req: web::Json<StationCreateRequest>,
     ) -> actix_web::Result<web::Json<WebResponse<String>>, errors::Error> {
         let id = app_state
-            .station_manager
+            .inspection_manager
             .create_station(req.into_inner())
             .await
             .map_err(|e| {
@@ -118,7 +118,7 @@ pub mod api {
         let id = path.id;
 
         let updated = app_state
-            .station_manager
+            .inspection_manager
             .update_station(id, req.into_inner())
             .await
             .map_err(|e| {
@@ -145,7 +145,7 @@ pub mod api {
         let id = path.id;
 
         let deleted = app_state
-            .station_manager
+            .inspection_manager
             .delete_station(id)
             .await
             .map_err(|e| {
@@ -178,7 +178,7 @@ pub mod api {
         };
 
         let updated = app_state
-            .station_manager
+            .inspection_manager
             .update_station(id, update_req)
             .await
             .map_err(|e| {

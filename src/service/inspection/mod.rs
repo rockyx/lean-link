@@ -42,16 +42,13 @@ mod keys {
     pub const INSPECTION_RESULT_TOPIC: &str = "inspection/result";
 }
 
-/// Magic bytes for inspection result identification
-pub const INSPECTION_RESULT_MAGIC: &[u8] = b"INSP";
-
 pub enum InspectionEvent {
     OneTrigger(Uuid),
     ContinueTrigger(Uuid, CameraFrame),
 }
 
 /// Inspection result header for WebSocket binary transmission
-/// Format: [4 bytes magic "INSP"][4 bytes header length (BE u32)][JSON header][binary JPEG data]
+/// Uses unified LLWS binary protocol via websocket::protocol module
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InspectionResultHeader {
@@ -59,6 +56,7 @@ pub struct InspectionResultHeader {
     pub station_id: Uuid,
     pub station_name: String,
     pub encoding: FrameEncoding,
+    pub timestamp: u64,
     pub is_ok: bool,
     pub detections: Vec<crate::service::inspection::detector::Detection>,
     pub processing_time_ms: u64,
@@ -75,24 +73,35 @@ pub struct InspectionResultPayload {
 }
 
 impl InspectionResultPayload {
+    /// Serialize to binary format for WebSocket transmission
+    /// Uses the unified LLWS binary protocol
     pub fn to_binary(&self) -> Vec<u8> {
-        let json_bytes = match serde_json::to_vec(&self.header) {
-            Ok(bytes) => bytes,
-            Err(e) => {
-                tracing::error!("Failed to serialize inspection result header: {}", e);
-                return Vec::new();
-            }
+        use crate::service::websocket::protocol::{
+            build_binary_payload, WsBinaryHeader, MSG_TYPE_INSPECTION_RESULT, PROTOCOL_VERSION,
         };
 
-        let total_size = INSPECTION_RESULT_MAGIC.len() + 4 + json_bytes.len() + self.data.len();
-        let mut buffer = Vec::with_capacity(total_size);
+        let header = &self.header;
+        let metadata = serde_json::json!({
+            "isOk": header.is_ok,
+            "detections": header.detections,
+            "processingTimeMs": header.processing_time_ms,
+        });
 
-        buffer.extend_from_slice(INSPECTION_RESULT_MAGIC);
-        buffer.extend_from_slice(&(json_bytes.len() as u32).to_be_bytes());
-        buffer.extend_from_slice(&json_bytes);
-        buffer.extend_from_slice(&self.data);
+        let ws_header = WsBinaryHeader {
+            version: PROTOCOL_VERSION,
+            msg_type: MSG_TYPE_INSPECTION_RESULT.to_string(),
+            topic: header.topic.clone(),
+            encoding: header.encoding.to_string(),
+            timestamp: header.timestamp,
+            width: header.image_width,
+            height: header.image_height,
+            data_length: self.data.len(),
+            source_id: header.station_id.to_string(),
+            source_name: header.station_name.clone(),
+            metadata,
+        };
 
-        buffer
+        build_binary_payload(ws_header, &self.data)
     }
 }
 
@@ -145,16 +154,33 @@ impl InspectionManager {
         ))
     }
 
-    fn initializ_onnx(&self, station_config: &StationConfig) -> Result<(), errors::Error> {
+    async fn initializ_onnx(&self, station_config: &StationConfig) -> Result<(), errors::Error> {
+        // Check if ONNX inference is already initialized for this station
+        if self.onnx_inferences.contains_key(&station_config.id) {
+            return Ok(());
+        }
+
         if let Some(ref model_path) = station_config.model_path
             && !model_path.is_empty()
         {
-            let mut onnx_inference =
-                OnnxInference::new(model_path.clone(), station_config.name.clone())
-                    .with_inference_type(station_config.inference_type.clone());
-            onnx_inference.initialize()?;
+            let model_path = model_path.clone();
+            let name = station_config.name.clone();
+            let inference_type = station_config.inference_type.clone();
+            let station_id = station_config.id;
+
+            // Use spawn_blocking to avoid blocking the async runtime
+            // ONNX model loading is a heavy blocking operation
+            let onnx_inference = tokio::task::spawn_blocking(move || {
+                let mut onnx_inference = OnnxInference::new(model_path, name)
+                    .with_inference_type(inference_type);
+                onnx_inference.initialize()?;
+                Ok::<_, DetectorError>(onnx_inference)
+            })
+            .await
+            .map_err(|e| DetectorError::Internal(format!("spawn_blocking error: {}", e)))??;
+
             self.onnx_inferences.insert(
-                station_config.id.clone(),
+                station_id,
                 Arc::new(Mutex::new(onnx_inference)),
             );
         }
@@ -185,7 +211,7 @@ impl InspectionManager {
             .start_grabbing(&station_config.camera_id, GrabMode::Continuous)
             .await?;
 
-        self.initializ_onnx(&station_config)?;
+        self.initializ_onnx(&station_config).await?;
 
         let station_id = station_config.id.clone();
 
@@ -223,7 +249,7 @@ impl InspectionManager {
                 .await?;
         }
 
-        self.initializ_onnx(&station_config)?;
+        self.initializ_onnx(&station_config).await?;
 
         Ok(())
     }
@@ -244,7 +270,7 @@ impl InspectionManager {
                 .await?;
         }
 
-        self.initializ_onnx(&station_config)?;
+        self.initializ_onnx(&station_config).await?;
 
         Ok(())
     }
@@ -281,20 +307,17 @@ impl InspectionManager {
         let camera_manager = self.camera_manager.clone();
         let camera_to_stations = self.camera_to_stations.clone();
         let class_to_detection_type = self.class_to_detection_type.clone();
-        let onnx_inferences = self.onnx_inferences.clone();
         tokio::spawn(async move {
             loop {
                 let station_manager = station_manager.clone();
                 let camera_manager = camera_manager.clone();
                 let class_to_detection_type = class_to_detection_type.clone();
-                let onnx_inferences = onnx_inferences.clone();
                 select! {
                     _ = cloned_token.cancelled() => {
                         if let Err(e) = camera_manager.close_all().await {
                             tracing::error!("Close All Camera error: {:?}", e);
                         }
                         camera_to_stations.clear();
-                        onnx_inferences.clear();
                         break;
                     }
 
@@ -350,6 +373,18 @@ impl InspectionManager {
                 }
             }
         }
+
+        // Initialize ONNX for all enabled stations
+        for station in self.station_manager.get_enabled_stations().await {
+            if let Err(e) = self.initializ_onnx(&station.config).await {
+                tracing::error!(
+                    "Failed to initialize ONNX for station {}: {:?}",
+                    station.config.id,
+                    e
+                );
+            }
+        }
+
         Ok(())
     }
 
@@ -398,6 +433,81 @@ impl InspectionManager {
             .insert(class.into(), detection_type.into());
     }
 
+    /// Remove ONNX inference instance for a station
+    fn remove_onnx(&self, station_id: &Uuid) {
+        if let Some((_, onnx)) = self.onnx_inferences.remove(station_id) {
+            tracing::info!("Removed ONNX inference for station {}", station_id);
+        }
+    }
+
+    /// Create a new station and initialize ONNX if model path is provided
+    pub async fn create_station(
+        &self,
+        request: crate::service::inspection::manager::StationCreateRequest,
+    ) -> Result<Uuid, errors::Error> {
+        let id = self.station_manager.create_station(request.clone()).await?;
+
+        // Initialize ONNX if station is enabled and has model path
+        if request.is_enabled.unwrap_or(true) {
+            let station = self.station_manager.get_station(id);
+            if let Some(managed) = station {
+                self.initializ_onnx(&managed.config).await?;
+            }
+        }
+
+        Ok(id)
+    }
+
+    /// Update a station and reinitialize ONNX if model path changed
+    pub async fn update_station(
+        &self,
+        id: Uuid,
+        request: crate::service::inspection::manager::StationUpdateRequest,
+    ) -> Result<bool, errors::Error> {
+        // Get old model path before update
+        let old_model_path = self
+            .station_manager
+            .get_station(id)
+            .and_then(|s| s.config.model_path.clone());
+
+        let updated = self.station_manager.update_station(id, request.clone()).await?;
+
+        if updated {
+            let new_station = self.station_manager.get_station(id);
+
+            if let Some(managed) = new_station {
+                let new_model_path = managed.config.model_path.clone();
+
+                // Reinitialize ONNX if model path changed
+                if old_model_path != new_model_path {
+                    self.remove_onnx(&id);
+                    if managed.config.is_enabled {
+                        self.initializ_onnx(&managed.config).await?;
+                    }
+                } else if managed.config.is_enabled {
+                    // Ensure ONNX is initialized if station is enabled
+                    self.initializ_onnx(&managed.config).await?;
+                } else {
+                    // Remove ONNX if station is disabled
+                    self.remove_onnx(&id);
+                }
+            }
+        }
+
+        Ok(updated)
+    }
+
+    /// Delete a station and remove its ONNX inference
+    pub async fn delete_station(&self, id: Uuid) -> Result<bool, errors::Error> {
+        let deleted = self.station_manager.delete_station(id).await?;
+
+        if deleted {
+            self.remove_onnx(&id);
+        }
+
+        Ok(deleted)
+    }
+
     fn on_one_trigger(
         camera_manager: ArcCameraManager,
         station_manager: ArcStationManager,
@@ -443,7 +553,7 @@ impl InspectionManager {
                 errors::Error::from(DetectorError::InvalidInput("工作站不存在".to_string()))
             })?;
 
-        self.initializ_onnx(&managed_station.config)?;
+        self.initializ_onnx(&managed_station.config).await?;
 
         let image_path = Path::new(image_path);
         if !image_path.exists() {
@@ -486,6 +596,10 @@ impl InspectionManager {
                     station_id: managed_station.config.id,
                     station_name: managed_station.config.name.clone(),
                     encoding: FrameEncoding::Jpeg,
+                    timestamp: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_micros() as u64,
                     is_ok: detection_result.is_ok,
                     detections: detection_result.detections.clone(),
                     processing_time_ms: detection_result.processing_time_ms,

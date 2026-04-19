@@ -94,8 +94,7 @@ pub struct CameraStreamInfo {
 }
 
 /// Camera frame payload for WebSocket transmission
-/// Uses binary format for efficient transmission:
-/// [4 bytes: JSON header length (big-endian u32)][JSON header][binary image data]
+/// Uses unified binary format via websocket::protocol module
 #[derive(Clone, Debug)]
 pub struct CameraFramePayload {
     /// Camera information
@@ -111,62 +110,35 @@ pub struct CameraFramePayload {
     pub size: usize,
 }
 
-/// Metadata header for binary frame transmission
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CameraFrameHeader {
-    /// Topic identifier
-    pub topic: String,
-    /// Camera information
-    pub camera: CameraStreamInfo,
-    /// Data encoding type
-    pub encoding: FrameEncoding,
-    /// Frame size in bytes (original)
-    pub size: usize,
-    /// Data length in bytes
-    pub data_length: usize,
-}
-
 impl CameraFramePayload {
-    /// Magic bytes for frame identification
-    pub const MAGIC_BYTES: &'static [u8] = b"CAMF";
-
     /// Serialize to binary format for WebSocket transmission
-    /// Format: [4 bytes magic][4 bytes header length][JSON header][binary image data]
+    /// Uses the unified LLWS binary protocol
     pub fn to_binary(&self) -> Vec<u8> {
-        let header = CameraFrameHeader {
+        use crate::service::websocket::protocol::{
+            build_binary_payload, WsBinaryHeader, MSG_TYPE_CAMERA_FRAME, PROTOCOL_VERSION,
+        };
+
+        let metadata = serde_json::json!({
+            "sequence": self.camera.sequence,
+            "pixelFormat": self.camera.pixel_format.to_string(),
+            "originalSize": self.size,
+        });
+
+        let header = WsBinaryHeader {
+            version: PROTOCOL_VERSION,
+            msg_type: MSG_TYPE_CAMERA_FRAME.to_string(),
             topic: super::super::web::service::camera::CAMERA_STREAM_TOPIC.to_string(),
-            camera: self.camera.clone(),
-            encoding: self.encoding,
-            size: self.size,
+            encoding: self.encoding.to_string(),
+            timestamp: self.camera.timestamp,
+            width: self.camera.width as u32,
+            height: self.camera.height as u32,
             data_length: self.data.len(),
+            source_id: self.camera.id.to_string(),
+            source_name: self.camera.name.clone(),
+            metadata,
         };
 
-        let json_bytes = match serde_json::to_vec(&header) {
-            Ok(bytes) => bytes,
-            Err(e) => {
-                tracing::error!("Failed to serialize frame header: {}", e);
-                return Vec::new();
-            }
-        };
-
-        // Total size: 4 (magic) + 4 (header length) + header + data
-        let total_size = Self::MAGIC_BYTES.len() + 4 + json_bytes.len() + self.data.len();
-        let mut buffer = Vec::with_capacity(total_size);
-
-        // Magic bytes for identification
-        buffer.extend_from_slice(Self::MAGIC_BYTES);
-
-        // Header length (big-endian u32)
-        buffer.extend_from_slice(&(json_bytes.len() as u32).to_be_bytes());
-
-        // JSON header
-        buffer.extend_from_slice(&json_bytes);
-
-        // Binary image data
-        buffer.extend_from_slice(&self.data);
-
-        buffer
+        build_binary_payload(header, &self.data)
     }
 }
 

@@ -154,6 +154,12 @@ impl PixelFormat {
     }
 }
 
+impl std::fmt::Display for PixelFormat {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct FrameSize {
     pub width: usize,
@@ -191,6 +197,16 @@ pub enum FrameEncoding {
 impl Default for FrameEncoding {
     fn default() -> Self {
         Self::Jpeg
+    }
+}
+
+impl std::fmt::Display for FrameEncoding {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FrameEncoding::Jpeg => write!(f, "jpeg"),
+            FrameEncoding::Raw => write!(f, "raw"),
+            FrameEncoding::Png => write!(f, "png"),
+        }
     }
 }
 

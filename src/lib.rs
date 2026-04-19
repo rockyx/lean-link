@@ -30,6 +30,7 @@ pub use serde_yaml_bw;
 pub use smallvec;
 pub use thiserror;
 pub use tsink;
+pub use ort;
 
 // Tracing re-export
 pub use tracing;

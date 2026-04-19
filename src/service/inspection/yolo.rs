@@ -10,7 +10,9 @@ use ort::value::ValueType;
 use tracing::info;
 
 use crate::database::entity::t_inspection_stations::InferenceType;
-use crate::service::inspection::detector::{BboxRegion, Detection, DetectionResult, Detector, DetectorError, MaskRegion};
+use crate::service::inspection::detector::{
+    BboxRegion, Detection, DetectionResult, Detector, DetectorError, MaskRegion,
+};
 use crate::service::inspection::image::InferenceImage;
 
 /// YOLO ONNX inference input information
@@ -473,8 +475,14 @@ impl OnnxInference {
 
     /// Preprocess image: letterbox resize + normalize + CHW layout
     /// Returns (preprocessed_data, scale, pad_x, pad_y)
-    fn preprocess(&self, image: &InferenceImage) -> Result<(Array3<f32>, f32, u32, u32), DetectorError> {
-        let input_info = self.input_info.as_ref().ok_or(DetectorError::NotInitialized)?;
+    fn preprocess(
+        &self,
+        image: &InferenceImage,
+    ) -> Result<(Array3<f32>, f32, u32, u32), DetectorError> {
+        let input_info = self
+            .input_info
+            .as_ref()
+            .ok_or(DetectorError::NotInitialized)?;
         let target_width = input_info.width;
         let target_height = input_info.height;
         let channels = input_info.channels;
@@ -484,7 +492,11 @@ impl OnnxInference {
             image.letterbox(target_width, target_height, (114, 114, 114));
 
         // Convert HWC to CHW and normalize to [0, 1]
-        let mut input_array = Array3::<f32>::zeros((channels as usize, target_height as usize, target_width as usize));
+        let mut input_array = Array3::<f32>::zeros((
+            channels as usize,
+            target_height as usize,
+            target_width as usize,
+        ));
 
         let data = letterboxed.as_bytes();
         for y in 0..target_height as usize {
@@ -502,9 +514,15 @@ impl OnnxInference {
     }
 
     /// Run ONNX inference
-    fn run_inference(&mut self, input_array: Array3<f32>) -> Result<(Vec<f32>, Option<Vec<f32>>), DetectorError> {
+    fn run_inference(
+        &mut self,
+        input_array: Array3<f32>,
+    ) -> Result<(Vec<f32>, Option<Vec<f32>>), DetectorError> {
         let session = self.session.as_mut().ok_or(DetectorError::NotInitialized)?;
-        let input_info = self.input_info.as_ref().ok_or(DetectorError::NotInitialized)?;
+        let input_info = self
+            .input_info
+            .as_ref()
+            .ok_or(DetectorError::NotInitialized)?;
 
         // Create input tensor [1, C, H, W] using ndarray
         let input_shape = (
@@ -513,7 +531,7 @@ impl OnnxInference {
             input_info.height as usize,
             input_info.width as usize,
         );
-        let input_values = input_array.into_raw_vec();
+        let (input_values, _offset) = input_array.into_raw_vec_and_offset();
         let input_ndarray = ndarray::Array4::from_shape_vec(input_shape, input_values)
             .map_err(|e| DetectorError::InferenceError(format!("Shape error: {}", e)))?;
         let input_tensor = ort::value::Value::from_array(input_ndarray)
@@ -532,7 +550,8 @@ impl OnnxInference {
         let detection_data: Vec<f32> = detection_output.1.to_vec();
 
         // Extract mask prototypes for segmentation (second output)
-        let mask_proto = if self.inference_type == InferenceType::Segmentation && outputs.len() > 1 {
+        let mask_proto = if self.inference_type == InferenceType::Segmentation && outputs.len() > 1
+        {
             let proto_output = outputs[1]
                 .try_extract_tensor::<f32>()
                 .map_err(|e| DetectorError::InferenceError(e.to_string()))?;
@@ -564,7 +583,10 @@ impl OnnxInference {
         confidence_threshold: f32,
         iou_threshold: f32,
     ) -> Result<Vec<Detection>, DetectorError> {
-        let input_info = self.input_info.as_ref().ok_or(DetectorError::NotInitialized)?;
+        let _input_info = self
+            .input_info
+            .as_ref()
+            .ok_or(DetectorError::NotInitialized)?;
 
         // Parse output dimensions
         let output_info = &self.output_infos[0];
@@ -685,7 +707,10 @@ impl OnnxInference {
         confidence_threshold: f32,
         iou_threshold: f32,
     ) -> Result<Vec<Detection>, DetectorError> {
-        let input_info = self.input_info.as_ref().ok_or(DetectorError::NotInitialized)?;
+        let input_info = self
+            .input_info
+            .as_ref()
+            .ok_or(DetectorError::NotInitialized)?;
 
         // Determine number of classes based on inference type
         let num_classes = if self.inference_type == InferenceType::Segmentation {
@@ -726,15 +751,16 @@ impl OnnxInference {
             let y2 = cy + h / 2.0;
 
             // Extract mask coefficients for segmentation
-            let mask_coeffs = if self.inference_type == InferenceType::Segmentation && self.num_masks > 0 {
-                let mut coeffs = Vec::with_capacity(self.num_masks);
-                for m in 0..self.num_masks {
-                    coeffs.push(output_data[(4 + num_classes + m) * num_detections + i]);
-                }
-                Some(coeffs)
-            } else {
-                None
-            };
+            let mask_coeffs =
+                if self.inference_type == InferenceType::Segmentation && self.num_masks > 0 {
+                    let mut coeffs = Vec::with_capacity(self.num_masks);
+                    for m in 0..self.num_masks {
+                        coeffs.push(output_data[(4 + num_classes + m) * num_detections + i]);
+                    }
+                    Some(coeffs)
+                } else {
+                    None
+                };
 
             candidates.push((
                 BoundingBox { x1, y1, x2, y2 },
@@ -804,7 +830,9 @@ impl OnnxInference {
 
             // Process mask for segmentation
             if let (Some(coeffs), Some(proto)) = (mask_coeffs, &mask_proto) {
-                if let Some(mask) = self.compute_mask(coeffs, proto, bbox, input_info.width, input_info.height) {
+                if let Some(mask) =
+                    self.compute_mask(coeffs, proto, bbox, input_info.width, input_info.height)
+                {
                     // Scale mask to original image size
                     let scaled_mask = self.scale_mask(
                         &mask,
@@ -864,7 +892,9 @@ impl OnnxInference {
         let mask_width = self.mask_proto_width;
         let num_masks = self.num_masks;
 
-        if mask_coeffs.len() != num_masks || mask_proto.len() != num_masks * mask_height * mask_width {
+        if mask_coeffs.len() != num_masks
+            || mask_proto.len() != num_masks * mask_height * mask_width
+        {
             return None;
         }
 
@@ -956,20 +986,37 @@ impl Detector for OnnxInference {
             return Err(DetectorError::ModelNotFound(self.model_path.clone()));
         }
 
-        let session = Session::builder()
-            .map_err(|e| DetectorError::ModelLoadError(e.to_string()))?
+        info!("Model Path correct");
+
+        let mut builder =
+            Session::builder().map_err(|e| DetectorError::ModelLoadError(e.to_string()))?;
+        info!("builder correct");
+
+        builder = builder
             .with_optimization_level(GraphOptimizationLevel::Level3)
-            .map_err(|e| DetectorError::ModelLoadError(e.to_string()))?
+            .map_err(|e| DetectorError::ModelLoadError(e.to_string()))?;
+        info!("with_optimization_level correct");
+
+        builder = builder
             .with_intra_threads(4)
-            .map_err(|e| DetectorError::ModelLoadError(e.to_string()))?
+            .map_err(|e| DetectorError::ModelLoadError(e.to_string()))?;
+        info!("with_intra_threads correct");
+
+        let session = builder
             .commit_from_file(&self.model_path)
             .map_err(|e| DetectorError::ModelLoadError(format!("{}: {}", self.model_path, e)))?;
+        info!("commit_from_file correct");
 
+        info!("Session correct");
         self.session = Some(session);
         self.extract_model_info()?;
+        info!("extract_model_info correct");
         self.extract_class_names_from_metadata();
+        info!("extract_class_names_from_metadata correct");
         self.extract_task_from_metadata();
+        info!("extract_task_from_metadata correct");
         self.extract_imgsz_from_metadata();
+        info!("extract_imgsz_from_metadata correct");
 
         info!(
             "Model '{}' initialized successfully (type: {:?})",
