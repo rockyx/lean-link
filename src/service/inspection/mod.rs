@@ -343,8 +343,27 @@ impl InspectionManager {
                                         );
                                     },
                                     // 相机持续触发
-                                    InspectionEvent::ContinueTrigger(_station_id, _camera_frame) => {
-                                        tokio::spawn(async move {});
+                                    InspectionEvent::ContinueTrigger(station_id, camera_frame) => {
+                                        let managed_station = station_manager.get_station(station_id);
+                                        if let Some(managed_station) = managed_station {
+                                            tokio::spawn(async move {
+                                                if let Err(e) = Self::inference_camera_frame(
+                                                    db_conn,
+                                                    managed_station,
+                                                    camera_frame,
+                                                    station_manager,
+                                                    station_id,
+                                                    class_to_detection_type,
+                                                    onnx_inferences,
+                                                    #[cfg(feature = "web")]
+                                                    ws_server,
+                                                )
+                                                .await
+                                                {
+                                                    tracing::error!("ContinueTrigger inference error: {:?}", e);
+                                                }
+                                            });
+                                        }
                                     },
                                 }
                             },
