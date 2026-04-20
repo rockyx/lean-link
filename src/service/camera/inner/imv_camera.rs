@@ -215,6 +215,29 @@ pub fn get_camera_list() -> Result<Vec<CameraInfo>, CameraError> {
     Ok(camera_list)
 }
 
+/// 从 IMV_Frame 拷贝数据到 CameraFrame（不释放帧缓存）
+fn convert_imv_frame_to_camera_frame(frame: &IMV_Frame) -> CameraFrame {
+    let frame_info = frame.frameInfo;
+    let data = unsafe { std::slice::from_raw_parts(frame.pData, frame_info.size as usize) };
+
+    CameraFrame {
+        block_id: frame_info.blockId,
+        status: frame_info.status,
+        frame_size: FrameSize {
+            width: frame_info.width as usize,
+            height: frame_info.height as usize,
+        },
+        size: frame_info.size as usize,
+        pixel_format: frame_info.pixelFormat.into(),
+        timestamp: frame_info.timeStamp,
+        chunk_count: frame_info.chunkCount as usize,
+        padding_x: frame_info.paddingX as usize,
+        padding_y: frame_info.paddingY as usize,
+        recv_frame_time: frame_info.recvFrameTime as u64,
+        data: data.into(),
+    }
+}
+
 /// 回调上下文 - 独立于 CameraHandler，用于 C 回调线程安全访问
 /// 
 /// 使用 Arc<Mutex<...>> 保护，确保：
@@ -591,7 +614,7 @@ impl CameraHandler {
         }
     }
 
-    fn get_frame(&self) -> Result<IMV_Frame, CameraError> {
+    fn get_frame_and_convert(&self) -> Result<CameraFrame, CameraError> {
         let mut frame = IMV_Frame::default();
         unsafe {
             let ret = IMV_GetFrame(self.handle, &mut frame, 1000);
@@ -600,7 +623,16 @@ impl CameraHandler {
             }
         }
 
-        Ok(frame)
+        // 从 SDK 帧数据拷贝到 Rust 的 Vec
+        let camera_frame = convert_imv_frame_to_camera_frame(&frame);
+
+        // 必须释放帧缓存，否则 SDK 内部缓存会耗尽
+        // SDK 默认缓存大小通常为 8，超过后 IMV_GetFrame 会失败
+        unsafe {
+            IMV_ReleaseFrame(self.handle, &mut frame);
+        }
+
+        Ok(camera_frame)
     }
 
     fn get_int_feature_value(&self, feature_name: &str) -> Result<i64, CameraError> {
@@ -739,15 +771,13 @@ impl IndustryCamera for IMVCamera {
                 try_counter = Some(counter + 1);
             }
 
-            let frame_result = inner.get_frame();
-            if frame_result.is_err() {
-                continue;
+            match inner.get_frame_and_convert() {
+                Ok(frame) => {
+                    inner.handle_single_frame(&frame);
+                    return Ok(frame);
+                }
+                Err(_) => continue,
             }
-
-            let frame = frame_result.unwrap().into();
-
-            inner.handle_single_frame(&frame);
-            return Ok(frame);
         }
 
         Err(CameraError::GrabError(format!("{}", IMV_ERROR)))
@@ -805,10 +835,11 @@ unsafe extern "C" fn frame_callback(
         }
         let frame = frame.unwrap();
         
-        // 通过 Mutex 安全访问数据
-        context.handle_frame(&(*frame).into());
+        // 拷贝帧数据到 Rust，然后通过 Mutex 安全访问
+        let camera_frame = convert_imv_frame_to_camera_frame(frame);
+        context.handle_frame(&camera_frame);
 
-        // 释放帧
+        // 释放帧缓存
         IMV_ReleaseFrame(handle, frame_ptr);
     }
 
@@ -896,30 +927,6 @@ impl Into<PixelFormat> for IMV_EPixelType {
             _IMV_EPixelType_gvspPixelMono1c => PixelFormat::Mono1c,
             _IMV_EPixelType_gvspPixelMono1e => PixelFormat::Mono1e,
             _ => PixelFormat::Undefined,
-        }
-    }
-}
-
-impl Into<CameraFrame> for IMV_Frame {
-    fn into(self) -> CameraFrame {
-        let frame_info = self.frameInfo;
-        let data = unsafe { std::slice::from_raw_parts(self.pData, frame_info.size as usize) };
-
-        CameraFrame {
-            block_id: frame_info.blockId,
-            status: frame_info.status,
-            frame_size: FrameSize {
-                width: frame_info.width as usize,
-                height: frame_info.height as usize,
-            },
-            size: frame_info.size as usize,
-            pixel_format: frame_info.pixelFormat.into(),
-            timestamp: frame_info.timeStamp,
-            chunk_count: frame_info.chunkCount as usize,
-            padding_x: frame_info.paddingX as usize,
-            padding_y: frame_info.paddingY as usize,
-            recv_frame_time: frame_info.recvFrameTime as u64,
-            data: data.into(),
         }
     }
 }

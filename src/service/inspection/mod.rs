@@ -8,6 +8,7 @@ use dashmap::DashMap;
 use sea_orm::{ActiveValue, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
 use serde::{Deserialize, Serialize};
 use tokio::select;
+use tokio::sync::Semaphore;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::{Mutex, RwLock, mpsc};
 use tokio_util::sync::CancellationToken;
@@ -141,6 +142,7 @@ pub struct InspectionManager {
     workstation_serial_monitor: Arc<DashMap<u32, Arc<Mutex<Box<dyn SerialPortMonitor>>>>>,
     workstation_trigger_event: Arc<DashMap<u32, mpsc::Sender<ExternalDetectionResult>>>,
     is_running: Mutex<bool>,
+    trigger_semaphore: Arc<DashMap<Uuid, Arc<Semaphore>>>,
     #[cfg(feature = "web")]
     ws_server: crate::service::websocket::ArcWebSocketServer,
 }
@@ -164,6 +166,7 @@ impl InspectionManager {
             workstation_serial_monitor: Arc::new(DashMap::new()),
             workstation_trigger_event: Arc::new(DashMap::new()),
             is_running: Mutex::new(false),
+            trigger_semaphore: Arc::new(DashMap::new()),
             #[cfg(feature = "web")]
             ws_server,
         }
@@ -380,6 +383,7 @@ impl InspectionManager {
         let ws_server = self.ws_server.clone();
         let db_conn = self.db_conn.clone();
         let workstation_trigger_event = self.workstation_trigger_event.clone();
+        let trigger_semaphore = self.trigger_semaphore.clone();
         tokio::spawn(async move {
             loop {
                 let station_manager = station_manager.clone();
@@ -389,6 +393,7 @@ impl InspectionManager {
                 let ws_server = ws_server.clone();
                 let db_conn = db_conn.clone();
                 let workstation_trigger_event = workstation_trigger_event.clone();
+                let trigger_semaphore = trigger_semaphore.clone();
                 select! {
                     _ = cloned_token.cancelled() => {
                         if let Err(e) = camera_manager.close_all().await {
@@ -405,32 +410,42 @@ impl InspectionManager {
                                     // 手动触发
                                     InspectionEvent::SerialOneTrigger(workstation) => {
                                         if let Some(station_id) = station_manager.get_stations_id_by_workstation(&workstation) {
-                                            Self::on_one_trigger(
-                                                db_conn,
-                                                camera_manager,
-                                                station_manager,
-                                                station_id,
-                                                class_to_detection_type,
-                                                onnx_inferences,
-                                                workstation_trigger_event,
-                                                #[cfg(feature = "web")]
-                                                ws_server,
-                                            );
+                                            if let Some(station) = station_manager.get_station(station_id) {
+                                                let camera_id = station.config.camera_id;
+                                                Self::on_one_trigger(
+                                                    db_conn,
+                                                    camera_manager,
+                                                    station_manager,
+                                                    station_id,
+                                                    camera_id,
+                                                    class_to_detection_type,
+                                                    onnx_inferences,
+                                                    workstation_trigger_event,
+                                                    trigger_semaphore,
+                                                    #[cfg(feature = "web")]
+                                                    ws_server,
+                                                );
+                                            }
                                         }
                                     },
                                     InspectionEvent::ExternalOneTrigger(workstation) => {
                                         if let Some(station_id) = station_manager.get_stations_id_by_workstation(&workstation) {
-                                            Self::on_one_trigger(
-                                                db_conn,
-                                                camera_manager,
-                                                station_manager,
-                                                station_id,
-                                                class_to_detection_type,
-                                                onnx_inferences,
-                                                workstation_trigger_event,
-                                                #[cfg(feature = "web")]
-                                                ws_server,
-                                            );
+                                            if let Some(station) = station_manager.get_station(station_id) {
+                                                let camera_id = station.config.camera_id;
+                                                Self::on_one_trigger(
+                                                    db_conn,
+                                                    camera_manager,
+                                                    station_manager,
+                                                    station_id,
+                                                    camera_id,
+                                                    class_to_detection_type,
+                                                    onnx_inferences,
+                                                    workstation_trigger_event,
+                                                    trigger_semaphore,
+                                                    #[cfg(feature = "web")]
+                                                    ws_server,
+                                                );
+                                            }
                                         }
                                     },
                                     // 相机持续触发
@@ -905,11 +920,32 @@ impl InspectionManager {
         camera_manager: ArcCameraManager,
         station_manager: ArcStationManager,
         station_id: Uuid,
+        camera_id: Uuid,
         class_to_detection_type: Arc<DashMap<String, DetectionType>>,
         onnx_inferences: Arc<DashMap<Uuid, Arc<Mutex<OnnxInference>>>>,
         workstation_trigger_event: Arc<DashMap<u32, mpsc::Sender<ExternalDetectionResult>>>,
+        trigger_semaphore: Arc<DashMap<Uuid, Arc<Semaphore>>>,
         #[cfg(feature = "web")] ws_server: crate::service::websocket::ArcWebSocketServer,
     ) {
+        // 获取或创建该相机的信号量（每相机只允许一个触发任务）
+        let semaphore = trigger_semaphore
+            .entry(camera_id)
+            .or_insert_with(|| Arc::new(Semaphore::new(1)))
+            .clone();
+
+        // 尝试获取信号量，如果相机正忙则直接丢弃请求
+        let permit = match semaphore.clone().try_acquire_owned() {
+            Ok(permit) => permit,
+            Err(_) => {
+                tracing::warn!(
+                    "Camera {} is busy, dropping trigger request for station {}",
+                    camera_id,
+                    station_id
+                );
+                return;
+            }
+        };
+
         let managed_station = station_manager.get_station(station_id);
         if managed_station.is_none() {
             return;
@@ -917,11 +953,16 @@ impl InspectionManager {
 
         let managed_station = managed_station.unwrap();
         tokio::spawn(async move {
-            match camera_manager
-                .trigger_frame(&managed_station.config.camera_id)
-                .await
+            // permit 在这里会被持有，任务结束后自动释放
+            let _permit = permit;
+
+            match tokio::time::timeout(
+                std::time::Duration::from_secs(10),
+                camera_manager.trigger_frame(&managed_station.config.camera_id),
+            )
+            .await
             {
-                Ok(camera_frame) => {
+                Ok(Ok(camera_frame)) => {
                     if let Err(e) = Self::inference_camera_frame(
                         db_conn,
                         managed_station,
@@ -939,8 +980,14 @@ impl InspectionManager {
                         tracing::error!("detection camera frame error: {:?}", e);
                     }
                 }
-                Err(e) => {
-                    tracing::error!("triger frame error: {:?}", e);
+                Ok(Err(e)) => {
+                    tracing::error!("trigger frame error: {:?}", e);
+                }
+                Err(_) => {
+                    tracing::error!(
+                        "trigger frame timeout for camera {}",
+                        managed_station.config.camera_id
+                    );
                 }
             }
         });
