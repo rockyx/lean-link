@@ -367,7 +367,7 @@ impl CameraManager {
         let mut managed_camera = managed.camera.lock().await;
 
         if let Some(camera) = managed_camera.as_ref() {
-            if camera.is_opened() {
+            if camera.is_opened().await {
                 tracing::warn!(
                     "Camera {} (id {}) is already opened",
                     managed.config.name(),
@@ -378,7 +378,7 @@ impl CameraManager {
         }
 
         let cam = create_camera(&managed.config)?;
-        cam.open()?;
+        cam.open().await?;
         *managed_camera = Some(cam);
 
         tracing::info!("Opened camera {} (id {})", managed.config.name(), id);
@@ -406,14 +406,14 @@ impl CameraManager {
             .ok_or_else(|| CameraError::CameraNotFound(id.to_string()))?;
 
         let frame_rx = if let Some(camera) = managed.camera.lock().await.as_mut() {
-            camera.set_grab_mode(mode);
+            camera.set_grab_mode(mode).await;
 
-            if !camera.is_opened() {
-                return Err(CameraError::NotOpened(id.to_string()));
+            if !camera.is_opened().await {
+                camera.open().await?;
             }
 
-            let frame_rx = camera.create_frame_channel();
-            camera.start_grab()?;
+            let frame_rx = camera.create_frame_channel().await;
+            camera.start_grab().await?;
             frame_rx
         } else {
             return Err(CameraError::NotOpened(id.to_string()));
@@ -444,7 +444,7 @@ impl CameraManager {
 
         if managed.is_grabbing {
             if let Some(camera) = managed.camera.lock().await.as_mut() {
-                camera.stop_grab()?;
+                camera.stop_grab().await?;
             }
             managed.is_grabbing = false;
 
@@ -468,7 +468,7 @@ impl CameraManager {
         }
 
         if let Some(camera) = managed.camera.lock().await.as_ref() {
-            return camera.trigger_one_frame();
+            return camera.trigger_one_frame().await;
         }
 
         Err(CameraError::CameraNotFound(id.to_string()))
@@ -486,11 +486,11 @@ impl CameraManager {
             .as_ref()
             .ok_or_else(|| CameraError::NotOpened(id.to_string()))?;
 
-        if !camera.is_opened() {
+        if !camera.is_opened().await {
             return Err(CameraError::NotOpened(id.to_string()));
         }
 
-        camera.frame_size()
+        camera.frame_size().await
     }
 
     pub async fn close_camera(&self, id: &uuid::Uuid) -> Result<(), CameraError> {
@@ -499,14 +499,15 @@ impl CameraManager {
             .get_mut(id)
             .ok_or_else(|| CameraError::CameraNotFound(id.to_string()))?;
 
+        self.stop_stream(id).await?;
+
         if managed.is_grabbing {
             if let Some(camera) = managed.camera.lock().await.as_mut() {
-                camera.stop_grab()?;
-                camera.close()?;
+                camera.stop_grab().await?;
+                camera.close().await?;
             }
             managed.is_grabbing = false;
         }
-        self.stop_stream(id).await?;
         tracing::info!("Closed camera {} (id {})", managed.config.name(), id);
 
         Ok(())
@@ -516,7 +517,6 @@ impl CameraManager {
         let ids = self.get_camera_ids();
 
         for id in ids {
-            self.stop_stream(&id).await?;
             self.close_camera(&id).await?;
         }
         Ok(())

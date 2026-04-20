@@ -123,7 +123,7 @@ pub trait SerialPortMonitor: Send + Sync {
     fn sender(&self) -> mpsc::Sender<ExternalDetectionResult>;
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct ExternalDetectionResult {
     pub workstation: u32,
     pub is_ok: bool,
@@ -140,6 +140,7 @@ pub struct InspectionManager {
     onnx_inferences: Arc<DashMap<Uuid, Arc<Mutex<OnnxInference>>>>,
     workstation_serial_monitor: Arc<DashMap<u32, Arc<Mutex<Box<dyn SerialPortMonitor>>>>>,
     workstation_trigger_event: Arc<DashMap<u32, mpsc::Sender<ExternalDetectionResult>>>,
+    is_running: Mutex<bool>,
     #[cfg(feature = "web")]
     ws_server: crate::service::websocket::ArcWebSocketServer,
 }
@@ -162,6 +163,7 @@ impl InspectionManager {
             onnx_inferences: Arc::new(DashMap::new()),
             workstation_serial_monitor: Arc::new(DashMap::new()),
             workstation_trigger_event: Arc::new(DashMap::new()),
+            is_running: Mutex::new(false),
             #[cfg(feature = "web")]
             ws_server,
         }
@@ -335,6 +337,14 @@ impl InspectionManager {
     }
 
     pub async fn start(&self) -> Result<Sender<InspectionEvent>, errors::Error> {
+        // Prevent duplicate start
+        {
+            let is_running = self.is_running.lock().await;
+            if *is_running {
+                return Err(InspectionError::AlreadyRunning.into());
+            }
+        }
+
         self.camera_to_stations.clear();
         let cloned_token = {
             let mut loop_token = self.loop_token.lock().await;
@@ -456,10 +466,20 @@ impl InspectionManager {
             }
         });
 
+        let mut is_running = self.is_running.lock().await;
+        *is_running = true;
         Ok(tx)
     }
 
     pub async fn stop(&self) -> Result<(), errors::Error> {
+        {
+            let mut is_running = self.is_running.lock().await;
+            if !*is_running {
+                return Err(InspectionError::NotRunning.into());
+            }
+            *is_running = false;
+        }
+
         let loop_token = self.loop_token.lock().await;
         loop_token.cancel();
         for monitor in self.workstation_serial_monitor.iter() {
@@ -467,6 +487,10 @@ impl InspectionManager {
         }
         self.workstation_trigger_event.clear();
         Ok(())
+    }
+
+    pub async fn is_running(&self) -> bool {
+        *self.is_running.lock().await
     }
 
     pub async fn initialize_from_database(&self) -> Result<(), errors::Error> {
@@ -1076,6 +1100,8 @@ pub type ArcInspectionManager = Arc<InspectionManager>;
 pub enum InspectionError {
     DuplicatedContinueCamera(String),
     InvalidConfig(String),
+    AlreadyRunning,
+    NotRunning,
 }
 
 impl std::fmt::Display for InspectionError {
@@ -1086,6 +1112,12 @@ impl std::fmt::Display for InspectionError {
             }
             InspectionError::InvalidConfig(msg) => {
                 write!(f, "无效串口配置：{}", msg)
+            }
+            InspectionError::AlreadyRunning => {
+                write!(f, "检视系统已经在运行中")
+            }
+            InspectionError::NotRunning => {
+                write!(f, "检视系统未运行")
             }
         }
     }

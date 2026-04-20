@@ -6,8 +6,10 @@ use std::ffi::{CStr, CString};
 use std::os::raw::c_void;
 use std::ptr::null_mut;
 use std::str::FromStr;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
-use tokio::sync::mpsc;
+use tokio::sync::{RwLock, mpsc};
 
 use crate::ffi::imv::*;
 use crate::service::camera::{
@@ -75,19 +77,15 @@ impl IMVCameraBuilder {
     }
 
     pub fn build(&self) -> Result<IMVCamera, CameraError> {
-        let mut camera = IMVCamera {
-            handle: null_mut(),
-            grab_mode: GrabMode::Continuous,
-            exposure_auto: false,
-            exposure_time: std::time::Duration::from_millis(1000),
-            frame_sender: None,
-            runtime_handle: None,
-        };
+        let mut handle = null_mut();
 
         match self.mode {
             _IMV_ECreateHandleMode_modeByIndex => unsafe {
-                let ret =
-                    IMV_CreateHandle(&mut camera.handle, self.mode, self.index as *mut c_void);
+                let ret = IMV_CreateHandle(
+                    &mut handle,
+                    self.mode,
+                    self.index as *mut c_void,
+                );
                 if ret != IMV_OK {
                     return Err(CameraError::CameraHandler(format!("{:?}", ret)));
                 }
@@ -98,7 +96,7 @@ impl IMVCameraBuilder {
                 let ptr_c_void = c_string.as_ptr() as *mut c_void;
 
                 unsafe {
-                    let ret = IMV_CreateHandle(&mut camera.handle, self.mode, ptr_c_void);
+                    let ret = IMV_CreateHandle(&mut handle, self.mode, ptr_c_void);
                     if ret != IMV_OK {
                         return Err(CameraError::CameraHandler(format!("{:?}", ret)).into());
                     }
@@ -110,7 +108,7 @@ impl IMVCameraBuilder {
                 let ptr_c_void = c_string.as_ptr() as *mut c_void;
 
                 unsafe {
-                    let ret = IMV_CreateHandle(&mut camera.handle, self.mode, ptr_c_void);
+                    let ret = IMV_CreateHandle(&mut handle, self.mode, ptr_c_void);
                     if ret != IMV_OK {
                         return Err(CameraError::CameraHandler(format!("{:?}", ret)).into());
                     }
@@ -122,7 +120,7 @@ impl IMVCameraBuilder {
                 let ptr_c_void = c_string.as_ptr() as *mut c_void;
 
                 unsafe {
-                    let ret = IMV_CreateHandle(&mut camera.handle, self.mode, ptr_c_void);
+                    let ret = IMV_CreateHandle(&mut handle, self.mode, ptr_c_void);
                     if ret != IMV_OK {
                         return Err(CameraError::CameraHandler(format!("{:?}", ret)).into());
                     }
@@ -132,7 +130,14 @@ impl IMVCameraBuilder {
                 return Err(CameraError::CameraHandler(format!("{:?}", IMV_ERROR)).into());
             }
         }
-        Ok(camera)
+
+        Ok(IMVCamera {
+            inner: Arc::new(RwLock::new(CameraHandler::new(handle))),
+            grab_mode: GrabMode::Continuous,
+            exposure_auto: false,
+            exposure_time: std::time::Duration::from_millis(1000),
+            frame_sender: None,
+        })
     }
 }
 
@@ -210,32 +215,91 @@ pub fn get_camera_list() -> Result<Vec<CameraInfo>, CameraError> {
     Ok(camera_list)
 }
 
-#[repr(C)]
-pub struct IMVCamera {
+/// 回调上下文 - 独立于 CameraHandler，用于 C 回调线程安全访问
+/// 
+/// 使用 Arc<Mutex<...>> 保护，确保：
+/// 1. C 回调可以安全地从任意线程访问
+/// 2. Rust 侧也可以安全地修改 frame_sender
+/// 3. 生命周期由 Arc 引用计数管理
+struct GrabCallbackContext {
     handle: IMV_HANDLE,
-    pub grab_mode: GrabMode,
-    pub exposure_auto: bool,
-    pub exposure_time: std::time::Duration,
-    pub frame_sender: Option<mpsc::Sender<CameraFrame>>,
-    runtime_handle: Option<tokio::runtime::Handle>,
+    frame_sender: Mutex<Option<mpsc::Sender<CameraFrame>>>,
+    runtime_handle: Mutex<Option<tokio::runtime::Handle>>,
 }
 
-unsafe impl Send for IMVCamera {}
-
-unsafe impl Sync for IMVCamera {}
-
-impl IndustryCamera for IMVCamera {
-    fn open(&self) -> Result<(), CameraError> {
-        if self.is_opened() {
-            return Ok(());
+impl GrabCallbackContext {
+    fn new(handle: IMV_HANDLE) -> Self {
+        Self {
+            handle,
+            frame_sender: Mutex::new(None),
+            runtime_handle: Mutex::new(None),
         }
+    }
 
+    fn set_sender(&self, sender: mpsc::Sender<CameraFrame>) {
+        let mut guard = self.frame_sender.lock().unwrap();
+        *guard = Some(sender);
+    }
+
+    fn set_runtime_handle(&self, handle: Option<tokio::runtime::Handle>) {
+        let mut guard = self.runtime_handle.lock().unwrap();
+        *guard = handle;
+    }
+
+    fn clear(&self) {
+        let mut sender_guard = self.frame_sender.lock().unwrap();
+        *sender_guard = None;
+        let mut runtime_guard = self.runtime_handle.lock().unwrap();
+        *runtime_guard = None;
+    }
+
+    fn handle_frame(&self, frame: &CameraFrame) {
+        let sender_guard = self.frame_sender.lock().unwrap();
+        if let Some(sender) = sender_guard.as_ref() {
+            let runtime_guard = self.runtime_handle.lock().unwrap();
+            if let Some(handle) = runtime_guard.as_ref() {
+                let sender_clone = sender.clone();
+                let frame = frame.clone();
+                handle.spawn(async move {
+                    if let Err(e) = sender_clone.send(frame).await {
+                        tracing::error!("send frame to channel failed: {:?}", e);
+                    }
+                });
+            } else {
+                tracing::error!("No tokio runtime available");
+            }
+        }
+    }
+}
+
+struct CameraHandler {
+    handle: IMV_HANDLE,
+    grab_context: Option<Arc<GrabCallbackContext>>,
+}
+
+// SAFETY: IMV_HANDLE 是 SDK 提供的句柄，SDK 保证其 API 是线程安全的。
+// 所有的 IMV_* 函数都可以从任意线程调用，SDK 内部有适当的同步机制。
+// grab_context 使用 Arc<Mutex<...>> 保护，也是线程安全的。
+unsafe impl Send for CameraHandler {}
+unsafe impl Sync for CameraHandler {}
+
+impl CameraHandler {
+    fn new(handle: IMV_HANDLE) -> Self {
+        Self {
+            handle,
+            grab_context: None,
+        }
+    }
+
+    fn open(&self) -> Result<(), CameraError> {
         unsafe {
+            tracing::debug!("imv camera handle: {:?}", self.handle);
             let ret = IMV_Open(self.handle);
             if ret != IMV_OK {
                 return Err(CameraError::OpenError(format!("{:?}", ret)));
             }
         }
+
         Ok(())
     }
 
@@ -246,40 +310,18 @@ impl IndustryCamera for IMVCamera {
 
         unsafe {
             let ret = IMV_IsOpen(self.handle);
-            if ret == 0 {
-                return false;
-            }
-
-            return true;
+            ret != 0
         }
     }
 
     fn is_grabbing(&self) -> bool {
-        if !self.is_opened() {
-            return false;
-        }
         unsafe {
             let ret = IMV_IsGrabbing(self.handle);
-            if ret == 0 {
-                return false;
-            }
+            ret != 0
         }
-
-        true
     }
 
     fn stop_grab(&mut self) -> Result<(), CameraError> {
-        if !self.is_opened() {
-            return Ok(());
-        }
-
-        unsafe {
-            let ret = IMV_IsGrabbing(self.handle);
-            if ret == 0 {
-                return Ok(());
-            }
-        }
-
         unsafe {
             let ret = IMV_StopGrabbing(self.handle);
             if ret != IMV_OK {
@@ -288,40 +330,46 @@ impl IndustryCamera for IMVCamera {
 
             let _ = IMV_ClearFrameBuffer(self.handle);
         }
-        self.frame_sender = None;
+
+        // 清理回调上下文
+        if let Some(ctx) = &self.grab_context {
+            ctx.clear();
+        }
+        self.grab_context = None;
+
         Ok(())
     }
 
-    fn start_grab(&mut self) -> Result<(), CameraError> {
-        if !self.is_opened() {
-            return Err(CameraError::NotOpened(format!(
-                "start_grab {:?}",
-                IMV_ERROR
-            )));
+    fn start_grab(
+        &mut self,
+        grab_mode: GrabMode,
+        sender: Option<mpsc::Sender<CameraFrame>>,
+    ) -> Result<(), CameraError> {
+        // 创建独立的回调上下文
+        let context = Arc::new(GrabCallbackContext::new(self.handle));
+        
+        // 设置 sender（如果提供）
+        if let Some(s) = sender {
+            context.set_sender(s);
         }
+        
+        // 捕获当前 Tokio 运行时句柄
+        context.set_runtime_handle(tokio::runtime::Handle::try_current().ok());
 
-        if self.is_grabbing() {
-            return Ok(());
-        }
-
-        // 捕获当前 Tokio 运行时句柄，供 C 回调线程使用
-        if self.runtime_handle.is_none() {
-            self.runtime_handle = tokio::runtime::Handle::try_current().ok();
-        }
-
-        self.sync_grab_mode()?;
-
-        let _ = self.sync_exposure_auto();
-        let _ = self.sync_exposure_time();
-
-        if self.grab_mode == GrabMode::Continuous {
+        if grab_mode == GrabMode::Continuous {
+            // 传递 Arc 的原始指针给 C 回调
+            // 使用 Arc::into_raw 获得 *const T，然后转为 *mut c_void
+            let context_ptr = Arc::into_raw(context.clone()) as *mut c_void;
             unsafe {
                 let ret = IMV_AttachGrabbing(
                     self.handle,
                     Some(frame_callback),
-                    self as *mut Self as *mut c_void,
+                    context_ptr,
                 );
                 if ret != IMV_OK {
+                    // 回调注册失败，需要释放 Arc
+                    // 从原始指针恢复 Arc 并释放
+                    let _ = Arc::from_raw(context_ptr as *const GrabCallbackContext);
                     return Err(CameraError::GrabError(format!("{:?}", ret)));
                 }
             }
@@ -333,89 +381,12 @@ impl IndustryCamera for IMVCamera {
                 return Err(CameraError::GrabError(format!("{:?}", ret)));
             }
         }
-
+        
+        // 保存 context 引用
+        self.grab_context = Some(context);
         Ok(())
     }
 
-    fn close(&self) -> Result<(), CameraError> {
-        if !self.is_opened() {
-            return Ok(());
-        }
-
-        unsafe {
-            let ret = IMV_Close(self.handle);
-            if ret != IMV_OK {
-                return Err(CameraError::CloseError(format!("{:?}", ret)));
-            }
-        }
-
-        Ok(())
-    }
-
-    fn frame_size(&self) -> Result<FrameSize, CameraError> {
-        let width = self.get_int_feature_value("Width")? as usize;
-        let height = self.get_int_feature_value("Height")? as usize;
-
-        Ok(FrameSize { width, height })
-    }
-
-    fn trigger_one_frame(&self) -> Result<CameraFrame, CameraError> {
-        unsafe {
-            // Clear frame buffer
-            let ret = IMV_ClearFrameBuffer(self.handle);
-            if ret != IMV_OK {
-                return Err(CameraError::FrameError(format!("{:?}", ret)));
-            }
-        }
-
-        // Execute soft trigger once
-        self.execute_command_feature("TriggerSoftware")?;
-
-        let mut try_counter = Some(0);
-        let mut ret = IMV_OK;
-
-        while let Some(counter) = try_counter {
-            if counter > 3 {
-                try_counter = None;
-            } else {
-                try_counter = Some(counter + 1);
-            }
-
-            let mut frame = IMV_Frame::default();
-            unsafe {
-                ret = IMV_GetFrame(self.handle, &mut frame, 1000);
-                if ret != IMV_OK {
-                    continue;
-                }
-            }
-
-            self.handle_frame(frame.into());
-            return Ok(frame.into());
-        }
-
-        Err(CameraError::GrabError(format!("{}", ret)))
-    }
-
-    fn create_frame_channel(&mut self) -> mpsc::Receiver<CameraFrame> {
-        let (sender, receiver) = mpsc::channel(1024);
-        self.frame_sender = Some(sender);
-        receiver
-    }
-
-    fn set_grab_mode(&mut self, grab_mode: GrabMode) {
-        self.grab_mode = grab_mode;
-    }
-
-    fn set_exposure_auto(&mut self, auto: bool) {
-        self.exposure_auto = auto;
-    }
-
-    fn set_exposure_time(&mut self, time: std::time::Duration) {
-        self.exposure_time = time;
-    }
-}
-
-impl IMVCamera {
     fn set_enum_feature_symbol(
         &self,
         feature_name: &str,
@@ -437,21 +408,17 @@ impl IMVCamera {
                 )));
             }
         }
-
         Ok(())
     }
 
-    fn sync_grab_mode(&self) -> Result<(), CameraError> {
-        // Set trigger selector to FrameStart
+    fn sync_grab_mode(&self, grab_mode: GrabMode) -> Result<(), CameraError> {
         self.set_enum_feature_symbol("TriggerSelector", "FrameStart")?;
 
-        match self.grab_mode {
+        match grab_mode {
             GrabMode::Continuous => {
-                // Set trigger mode to Off
                 self.set_enum_feature_symbol("TriggerMode", "Off")?;
             }
             GrabMode::SingleFrame => {
-                // Set trigger source to Software
                 self.set_enum_feature_symbol("TriggerSource", "Software")?;
                 self.set_enum_feature_symbol("TriggerMode", "On")?;
             }
@@ -481,8 +448,8 @@ impl IMVCamera {
         Ok(())
     }
 
-    fn sync_exposure_auto(&self) -> Result<(), CameraError> {
-        if self.exposure_auto {
+    fn sync_exposure_auto(&self, exposure_auto: bool) -> Result<(), CameraError> {
+        if exposure_auto {
             self.set_enum_feature_value("ExposureAuto", 2)?;
         } else {
             self.set_enum_feature_value("ExposureAuto", 0)?;
@@ -565,7 +532,7 @@ impl IMVCamera {
         }
     }
 
-    fn sync_exposure_time(&self) -> Result<(), CameraError> {
+    fn sync_exposure_time(&self, exposure_time: Duration) -> Result<(), CameraError> {
         let mut et = self.get_double_feature_value("ExposureTime")?;
         let exposure_min_value = self.get_double_feature_min("ExposureTime")?;
         let exposure_max_value = self.get_double_feature_max("ExposureTime")?;
@@ -577,7 +544,7 @@ impl IMVCamera {
             exposure_max_value
         );
 
-        et = self.exposure_time.as_millis() as f64;
+        et = exposure_time.as_millis() as f64;
         if et < exposure_min_value {
             et = exposure_min_value;
         } else if et > exposure_max_value {
@@ -586,38 +553,25 @@ impl IMVCamera {
         self.set_double_feature_value("ExposureTime", et)
     }
 
-    fn handle_frame(&self, frame: CameraFrame) {
-        if let Some(sender) = &self.frame_sender {
-            if let Some(handle) = &self.runtime_handle {
-                let sender_clone = sender.clone();
-                handle.spawn(async move {
-                    let result = sender_clone.send(frame).await;
-                    if result.is_err() {
-                        tracing::error!("send frame to channel failed: {:?}", result.unwrap_err());
-                    }
-                });
-            } else {
-                tracing::error!("No tokio runtime available");
+    fn close(&self) -> Result<(), CameraError> {
+        unsafe {
+            let ret = IMV_Close(self.handle);
+            if ret != IMV_OK {
+                return Err(CameraError::CloseError(format!("{:?}", ret)));
             }
         }
+        Ok(())
     }
 
-    fn get_int_feature_value(&self, feature_name: &str) -> Result<i64, CameraError> {
+    fn clear_frame_buffer(&self) -> Result<(), CameraError> {
         unsafe {
-            let feature_name_c_str = CString::from_str(feature_name)
-                .map_err(|e| CameraError::SystemError(format!("{:?}", e)))?;
-            let feature_name_ptr = feature_name_c_str.as_ptr() as *const i8;
-            let mut value: i64 = 0;
-            let ret = IMV_GetIntFeatureValue(self.handle, feature_name_ptr, &mut value);
+            let ret = IMV_ClearFrameBuffer(self.handle);
             if ret != IMV_OK {
-                return Err(CameraError::Config(format!(
-                    "获取整型属性值: {} {:?}",
-                    feature_name, ret
-                )));
+                return Err(CameraError::FrameError(format!("{:?}", ret)));
             }
-
-            Ok(value)
         }
+
+        Ok(())
     }
 
     fn execute_command_feature(&self, feature_name: &str) -> Result<(), CameraError> {
@@ -636,9 +590,44 @@ impl IMVCamera {
             Ok(())
         }
     }
+
+    fn get_frame(&self) -> Result<IMV_Frame, CameraError> {
+        let mut frame = IMV_Frame::default();
+        unsafe {
+            let ret = IMV_GetFrame(self.handle, &mut frame, 1000);
+            if ret != IMV_OK {
+                return Err(CameraError::GrabError(format!("{}", ret)));
+            }
+        }
+
+        Ok(frame)
+    }
+
+    fn get_int_feature_value(&self, feature_name: &str) -> Result<i64, CameraError> {
+        unsafe {
+            let feature_name_c_str = CString::from_str(feature_name)
+                .map_err(|e| CameraError::SystemError(format!("{:?}", e)))?;
+            let feature_name_ptr = feature_name_c_str.as_ptr() as *const i8;
+            let mut value: i64 = 0;
+            let ret = IMV_GetIntFeatureValue(self.handle, feature_name_ptr, &mut value);
+            if ret != IMV_OK {
+                return Err(CameraError::Config(format!(
+                    "获取整数属性值: {} {:?}",
+                    feature_name, ret
+                )));
+            }
+
+            Ok(value)
+        }
+    }
+
+    fn handle_single_frame(&self, frame: &CameraFrame) {
+        // 单帧模式下直接处理（无回调上下文）
+        tracing::debug!("Single frame captured: block_id={}", frame.block_id);
+    }
 }
 
-impl Drop for IMVCamera {
+impl Drop for CameraHandler {
     fn drop(&mut self) {
         if self.handle.is_null() {
             return;
@@ -654,6 +643,141 @@ impl Drop for IMVCamera {
     }
 }
 
+pub struct IMVCamera {
+    inner: Arc<RwLock<CameraHandler>>,
+    grab_mode: GrabMode,
+    exposure_auto: bool,
+    exposure_time: std::time::Duration,
+    frame_sender: Option<mpsc::Sender<CameraFrame>>,
+}
+
+#[async_trait::async_trait]
+impl IndustryCamera for IMVCamera {
+    async fn open(&self) -> Result<(), CameraError> {
+        let inner = self.inner.read().await;
+        if inner.is_opened() {
+            return Ok(());
+        }
+
+        inner.open()
+    }
+
+    async fn is_opened(&self) -> bool {
+        self.inner.read().await.is_opened()
+    }
+
+    async fn is_grabbing(&self) -> bool {
+        let inner = self.inner.read().await;
+        if !inner.is_opened() {
+            return false;
+        }
+        inner.is_grabbing()
+    }
+
+    async fn stop_grab(&mut self) -> Result<(), CameraError> {
+        let mut inner = self.inner.write().await;
+        if !inner.is_opened() {
+            return Ok(());
+        }
+        if !inner.is_grabbing() {
+            return Ok(());
+        }
+        inner.stop_grab()
+    }
+
+    async fn start_grab(&mut self) -> Result<(), CameraError> {
+        let mut inner = self.inner.write().await;
+        if !inner.is_opened() {
+            return Err(CameraError::NotOpened(format!(
+                "start_grab {:?}",
+                IMV_ERROR
+            )));
+        }
+
+        if inner.is_grabbing() {
+            return Ok(());
+        }
+
+        inner.sync_grab_mode(self.grab_mode)?;
+        let _ = inner.sync_exposure_auto(self.exposure_auto);
+        let _ = inner.sync_exposure_time(self.exposure_time);
+        
+        // 传递 frame_sender 到 CameraHandler
+        let sender = self.frame_sender.clone();
+        inner.start_grab(self.grab_mode, sender)
+    }
+
+    async fn close(&self) -> Result<(), CameraError> {
+        let inner = self.inner.read().await;
+        if !inner.is_opened() {
+            return Ok(());
+        }
+
+        inner.close()
+    }
+
+    async fn frame_size(&self) -> Result<FrameSize, CameraError> {
+        let inner = self.inner.read().await;
+        let width = inner.get_int_feature_value("Width")? as usize;
+        let height = inner.get_int_feature_value("Height")? as usize;
+
+        Ok(FrameSize { width, height })
+    }
+
+    async fn trigger_one_frame(&self) -> Result<CameraFrame, CameraError> {
+        let inner = self.inner.read().await;
+        inner.clear_frame_buffer()?;
+
+        inner.execute_command_feature("TriggerSoftware")?;
+
+        let mut try_counter = Some(0);
+
+        while let Some(counter) = try_counter {
+            if counter > 3 {
+                try_counter = None;
+            } else {
+                try_counter = Some(counter + 1);
+            }
+
+            let frame_result = inner.get_frame();
+            if frame_result.is_err() {
+                continue;
+            }
+
+            let frame = frame_result.unwrap().into();
+
+            inner.handle_single_frame(&frame);
+            return Ok(frame);
+        }
+
+        Err(CameraError::GrabError(format!("{}", IMV_ERROR)))
+    }
+
+    async fn create_frame_channel(&mut self) -> mpsc::Receiver<CameraFrame> {
+        let (sender, receiver) = mpsc::channel(1024);
+        self.frame_sender = Some(sender);
+        receiver
+    }
+
+    async fn set_grab_mode(&mut self, grab_mode: GrabMode) {
+        self.grab_mode = grab_mode;
+    }
+
+    async fn set_exposure_auto(&mut self, auto: bool) {
+        self.exposure_auto = auto;
+    }
+
+    async fn set_exposure_time(&mut self, time: std::time::Duration) {
+        self.exposure_time = time;
+    }
+}
+
+/// C 回调函数 - 线程安全
+/// 
+/// # Safety
+/// - user_ptr 是由 Arc::into_raw 生成的 GrabCallbackContext 指针
+/// - 回调可能在任意 C 线程中执行
+/// - 使用 Arc::from_raw 重建引用，通过 Mutex 安全访问数据
 unsafe extern "C" fn frame_callback(
     frame_ptr: *mut IMV_Frame,
     user_ptr: *mut ::std::os::raw::c_void,
@@ -667,18 +791,30 @@ unsafe extern "C" fn frame_callback(
         return;
     }
 
-    let camera = unsafe { &mut *(user_ptr as *mut IMVCamera) };
+    // SAFETY: user_ptr 是由 start_grab 中的 Arc::into_raw 生成的有效指针
+    let context = unsafe { Arc::from_raw(user_ptr as *const GrabCallbackContext) };
+    let handle = context.handle;
 
+    // SAFETY: frame_ptr 是 SDK 提供的有效帧指针
     unsafe {
         let frame = frame_ptr.as_ref();
         if frame.is_none() {
+            // 需要释放我们刚才增加的引用计数
+            std::mem::forget(context);
             return;
         }
         let frame = frame.unwrap();
-        camera.handle_frame((*frame).into());
+        
+        // 通过 Mutex 安全访问数据
+        context.handle_frame(&(*frame).into());
 
-        IMV_ReleaseFrame(camera.handle, frame_ptr);
+        // 释放帧
+        IMV_ReleaseFrame(handle, frame_ptr);
     }
+
+    // 释放我们刚才增加的引用计数，但不释放内存
+    // 因为 C 库可能还会继续调用回调（Arc 内部仍有一个引用）
+    std::mem::forget(context);
 }
 
 impl Into<PixelFormat> for IMV_EPixelType {
@@ -767,11 +903,9 @@ impl Into<PixelFormat> for IMV_EPixelType {
 impl Into<CameraFrame> for IMV_Frame {
     fn into(self) -> CameraFrame {
         let frame_info = self.frameInfo;
-        let data = unsafe {
-            std::slice::from_raw_parts(self.pData, frame_info.size as usize)
-        };
+        let data = unsafe { std::slice::from_raw_parts(self.pData, frame_info.size as usize) };
 
-        let frame = CameraFrame {
+        CameraFrame {
             block_id: frame_info.blockId,
             status: frame_info.status,
             frame_size: FrameSize {
@@ -786,9 +920,7 @@ impl Into<CameraFrame> for IMV_Frame {
             padding_y: frame_info.paddingY as usize,
             recv_frame_time: frame_info.recvFrameTime as u64,
             data: data.into(),
-        };
-
-        frame
+        }
     }
 }
 

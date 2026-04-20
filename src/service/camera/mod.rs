@@ -289,19 +289,20 @@ impl From<CameraConfig> for crate::database::entity::t_camera_configs::ActiveMod
     }
 }
 
+#[async_trait::async_trait]
 pub trait IndustryCamera: Send + Sync {
-    fn open(&self) -> Result<(), CameraError>;
-    fn is_opened(&self) -> bool;
-    fn is_grabbing(&self) -> bool;
-    fn stop_grab(&mut self) -> Result<(), CameraError>;
-    fn start_grab(&mut self) -> Result<(), CameraError>;
-    fn close(&self) -> Result<(), CameraError>;
-    fn frame_size(&self) -> Result<FrameSize, CameraError>;
-    fn trigger_one_frame(&self) -> Result<CameraFrame, CameraError>;
-    fn create_frame_channel(&mut self) -> mpsc::Receiver<CameraFrame>;
-    fn set_grab_mode(&mut self, grab_mode: GrabMode);
-    fn set_exposure_auto(&mut self, auto: bool);
-    fn set_exposure_time(&mut self, time: std::time::Duration);
+    async fn open(&self) -> Result<(), CameraError>;
+    async fn is_opened(&self) -> bool;
+    async fn is_grabbing(&self) -> bool;
+    async fn stop_grab(&mut self) -> Result<(), CameraError>;
+    async fn start_grab(&mut self) -> Result<(), CameraError>;
+    async fn close(&self) -> Result<(), CameraError>;
+    async fn frame_size(&self) -> Result<FrameSize, CameraError>;
+    async fn trigger_one_frame(&self) -> Result<CameraFrame, CameraError>;
+    async fn create_frame_channel(&mut self) -> mpsc::Receiver<CameraFrame>;
+    async fn set_grab_mode(&mut self, grab_mode: GrabMode);
+    async fn set_exposure_auto(&mut self, auto: bool);
+    async fn set_exposure_time(&mut self, time: std::time::Duration);
 }
 
 /// Camera error types

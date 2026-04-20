@@ -76,4 +76,31 @@ pub mod api {
         let result = app_state.inspection_manager.enumerate_detection_types();
         Ok(WebResponse::with_result(result).into())
     }
+
+    #[post("/start")]
+    pub async fn start(
+        app_state: web::Data<AppState>,
+    ) -> actix_web::Result<web::Json<WebResponse<()>>, errors::Error> {
+        app_state.inspection_manager.start().await?;
+
+        Ok(WebResponse::with_result(()).into())
+    }
+
+    #[post("/stop")]
+    pub async fn stop(
+        app_state: web::Data<AppState>,
+    ) -> actix_web::Result<web::Json<WebResponse<()>>, errors::Error> {
+        app_state.inspection_manager.stop().await?;
+
+        Ok(WebResponse::with_result(()).into())
+    }
+
+    #[get("/status")]
+    pub async fn status(
+        app_state: web::Data<AppState>,
+    ) -> actix_web::Result<web::Json<WebResponse<bool>>, errors::Error> {
+        let is_running = app_state.inspection_manager.is_running().await;
+
+        Ok(WebResponse::with_result(is_running).into())
+    }
 }
