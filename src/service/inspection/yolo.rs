@@ -14,6 +14,7 @@ use crate::service::inspection::detector::{
     BboxRegion, Detection, DetectionResult, Detector, DetectorError, MaskRegion,
 };
 use crate::service::inspection::image::InferenceImage;
+use std::collections::HashSet;
 
 /// YOLO ONNX inference input information
 #[derive(Debug, Clone)]
@@ -468,6 +469,13 @@ impl OnnxInference {
         for detection in detections {
             result.add_detection(detection);
         }
+
+        // For detection models, ensure all expected product categories are detected
+        // If a category is missing (no OK or NG detected), add a "not detected" NG result
+        if self.inference_type == InferenceType::Detection {
+            self.validate_and_add_missing_detections(&mut result);
+        }
+
         result.processing_time_ms = start.elapsed().as_millis() as u64;
 
         Ok(result)
@@ -857,6 +865,71 @@ impl OnnxInference {
         }
 
         Ok(detections)
+    }
+
+    /// Validate detection results and add missing category detections
+    ///
+    /// For detection models with OK/NG paired class names (e.g., ConnectorOK/ConnectorNG),
+    /// if neither OK nor NG is detected for a category, add a \"not detected\" NG result.
+    fn validate_and_add_missing_detections(&self, result: &mut DetectionResult) {
+        if self.class_names.is_empty() {
+            return;
+        }
+
+        // Extract product categories from class names (strip OK/NG suffix)
+        let mut categories: HashSet<String> = HashSet::new();
+        for name in self.class_names.values() {
+            let category = Self::extract_category(name);
+            if !category.is_empty() {
+                categories.insert(category);
+            }
+        }
+
+        // Collect detected categories from results
+        let mut detected_categories: HashSet<String> = HashSet::new();
+        for detection in &result.detections {
+            let category = Self::extract_category(&detection.class_name);
+            if !category.is_empty() {
+                detected_categories.insert(category);
+            }
+        }
+
+        // Find missing categories and add NG detections
+        for category in &categories {
+            if !detected_categories.contains(category) {
+                // Category not detected - add a NG result
+                let ng_name = format!("{}NG", category);
+                let mut detection = Detection::new(ng_name, -1, 1.0);
+                detection.bbox = None; // No bbox for not-detected items
+                result.add_detection(detection);
+                tracing::warn!(
+                    "Category '{}' not detected, adding NG result",
+                    category
+                );
+            }
+        }
+    }
+
+    /// Extract product category from class name by stripping OK/NG suffix
+    /// Examples: "ConnectorOK" -> "Connector", "CrimpNG" -> "Crimp"
+    fn extract_category(class_name: &str) -> String {
+        let name = class_name.trim();
+        if name.is_empty() {
+            return String::new();
+        }
+
+        // Check for OK suffix (case insensitive)
+        let lower = name.to_lowercase();
+        if lower.ends_with("ok") {
+            return name[..name.len() - 2].to_string();
+        }
+        // Check for NG suffix (case insensitive)
+        if lower.ends_with("ng") {
+            return name[..name.len() - 2].to_string();
+        }
+
+        // If no OK/NG suffix, return original name as category
+        name.to_string()
     }
 
     /// Compute IoU between two bounding boxes
